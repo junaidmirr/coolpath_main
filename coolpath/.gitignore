@@ -1,0 +1,102 @@
+# ==============================================================================
+# CoolPath - Unified Git Ignore Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Dependencies & Virtual Environments
+# ------------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+venv/
+**/venv/
+.venv/
+**/.venv/
+env/
+**/env/
+
+# ------------------------------------------------------------------------------
+# Build Outputs & Generated Artifacts
+# ------------------------------------------------------------------------------
+dist/
+**/dist/
+build/
+**/build/
+.expo/
+**/.expo/
+.next/
+**/.next/
+out/
+**/out/
+
+# Android Build Artifacts & Local Configurations
+mobile/android/app/build/
+mobile/android/build/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/.idea/
+mobile/android/app/release/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# OTA Dynamic Bundle Outputs (compiled on local dev)
+backend/static/index.android.bundle
+backend/static/index.android.bundle.meta
+backend/static/bundle_meta.json
+
+# ------------------------------------------------------------------------------
+# Environment & Secrets (DO NOT COMMIT SENSITIVE KEYS)
+# ------------------------------------------------------------------------------
+.env
+*.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ------------------------------------------------------------------------------
+# Operating System & IDE Files
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor / IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# ------------------------------------------------------------------------------
+# Python Bytecode & Cache
+# ------------------------------------------------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ------------------------------------------------------------------------------
+# Temporary Output & Log Files
+# ------------------------------------------------------------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+out.txt
+out2.txt
+cache/
+**/cache/
