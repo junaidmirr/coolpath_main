@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -10,21 +10,20 @@ import {
   Easing,
   Modal,
   Platform,
-  ActivityIndicator,
   Dimensions,
-  SafeAreaView,
+  KeyboardAvoidingView,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
+import * as Speech from 'expo-speech';
+import * as FileSystem from 'expo-file-system';
 import {
   callAssistantBackend,
   transcribeAudio,
   AssistantChatMessage,
   AssistantChatContext,
 } from '../services/voiceAssistant';
-import { SOUND_BASE64 } from '../services/soundBundle';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
@@ -35,7 +34,7 @@ interface CoolPathAssistantModalProps {
   currentDestText: string;
   liveTempC: number | null;
   liveAqi: number | null;
-  onPlanRouteAction: (originText: string, destText: string, activity?: string) => void;
+  onPlanRouteAction: (originText: string, destText: string, activity?: string, pace?: string, mode?: string) => void;
   onRegisterSpeakFn?: (fn: (text: string) => void) => void;
   theme: {
     bg: string;
@@ -49,557 +48,25 @@ interface CoolPathAssistantModalProps {
   };
 }
 
-function buildAudioEngineHtml(): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-  <style>
-    body, html {
-      margin: 0; padding: 0; width: 100%; height: 100%;
-      overflow: hidden; background: transparent;
-    }
-    #canvas {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      z-index: 1; pointer-events: none;
-    }
-  </style>
-</head>
-<body>
-  <canvas id="canvas"></canvas>
-  <script>
-  (function() {
-    'use strict';
+type ActivityOption = 'walking' | 'running' | 'biking' | 'driving';
+type PaceOption = 'slow' | 'normal' | 'fast';
+type TripMode = 'instant' | 'scheduled';
 
-    function postRN(obj) {
-      if (window.ReactNativeWebView) {
-        window.ReactNativeWebView.postMessage(JSON.stringify(obj));
-      }
-    }
+type AssistantState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
-    const soundSources = {
-      intro: '${SOUND_BASE64.intro}',
-      ready: '${SOUND_BASE64.ready}',
-      start: '${SOUND_BASE64.start}',
-      close: '${SOUND_BASE64.close}'
-    };
-
-    let audioCtx = null;
-    const audioBuffers = {};
-
-    function initAudioContext() {
-      try {
-        if (!audioCtx) {
-          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-          if (AudioContextClass) {
-            audioCtx = new AudioContextClass();
-          }
-        }
-        if (audioCtx && audioCtx.state === 'suspended') {
-          audioCtx.resume();
-        }
-      } catch(e) {}
-    }
-
-    function preloadAudioBuffers() {
-      initAudioContext();
-      if (!audioCtx) return;
-
-      Object.keys(soundSources).forEach(function(key) {
-        try {
-          const dataUri = soundSources[key];
-          fetch(dataUri)
-            .then(function(res) { return res.arrayBuffer(); })
-            .then(function(buf) {
-              return audioCtx.decodeAudioData(buf);
-            })
-            .then(function(decoded) {
-              audioBuffers[key] = decoded;
-            })
-            .catch(function(e) {});
-        } catch(e) {}
-      });
-    }
-
-    window._playEffect = function(name) {
-      try {
-        initAudioContext();
-        if (audioCtx && audioBuffers[name]) {
-          const source = audioCtx.createBufferSource();
-          source.buffer = audioBuffers[name];
-          source.connect(audioCtx.destination);
-          source.onended = function() {
-            postRN({ type: 'effect_ended', name: name });
-          };
-          source.start(0);
-          return;
-        }
-
-        const src = soundSources[name];
-        if (src) {
-          const a = new Audio(src);
-          a.volume = 1.0;
-          a.onended = function() {
-            postRN({ type: 'effect_ended', name: name });
-          };
-          a.play().catch(function(e) {
-            postRN({ type: 'effect_ended', name: name });
-          });
-        }
-      } catch(e) {}
-    };
-
-    let currentAudioSpeech = null;
-    window._speakText = function(text) {
-      window._stopListening();
-      try {
-        if (currentAudioSpeech) {
-          try { currentAudioSpeech.pause(); } catch(e) {}
-          currentAudioSpeech = null;
-        }
-
-        const url = "https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=" + encodeURIComponent(text);
-        const a = new Audio(url);
-        currentAudioSpeech = a;
-
-        a.onended = function() {
-          if (currentAudioSpeech === a) {
-            currentAudioSpeech = null;
-            postRN({ type: 'speech_ended' });
-          }
-        };
-
-        a.onerror = function() {
-          if (currentAudioSpeech === a) {
-            currentAudioSpeech = null;
-            postRN({ type: 'speech_ended' });
-          }
-        };
-
-        a.play().catch(function(e) {
-          if (currentAudioSpeech === a) {
-            currentAudioSpeech = null;
-            postRN({ type: 'speech_ended' });
-          }
-        });
-      } catch(e) {
-        postRN({ type: 'speech_ended' });
-      }
-    };
-
-    // Dual-Engine Speech Recognition (WebSpeech + MediaRecorder Multimodal Fallback)
-    let recognition = null;
-    let isListening = false;
-    let silenceTimer = null;
-    let currentSpeech = '';
-    let audioStream = null;
-    let mediaRecorder = null;
-    let audioChunks = [];
-    let analyser = null;
-    let dataArray = null;
-    let micVolume = 0;
-    let hasSpoken = false;
-
-    try {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
-
-        recognition.onstart = function() {
-          postRN({ type: 'stt_started' });
-        };
-
-        recognition.onresult = function(event) {
-          if (!isListening) return;
-
-          let finalTokens = '';
-          let interimTokens = '';
-
-          for (let i = 0; i < event.results.length; ++i) {
-            const res = event.results[i];
-            if (res.isFinal) {
-              finalTokens += res[0].transcript + ' ';
-            } else {
-              interimTokens += res[0].transcript;
-            }
-          }
-
-          const combined = (finalTokens + ' ' + interimTokens).replace(/\s+/g, ' ').trim();
-          if (combined) {
-            currentSpeech = combined;
-            hasSpoken = true;
-            postRN({ type: 'stt_transcript_update', text: combined });
-
-            if (silenceTimer) clearTimeout(silenceTimer);
-            silenceTimer = setTimeout(function() {
-              if (isListening && currentSpeech.trim().length >= 3) {
-                window._stopListening();
-              }
-            }, 3000);
-          }
-        };
-
-        recognition.onerror = function(event) {
-          if (event.error === 'no-speech') return;
-          postRN({ type: 'stt_error', error: 'Recognition error: ' + event.error });
-        };
-
-        recognition.onend = function() {
-          if (!isListening) {
-            postRN({ type: 'stt_ended' });
-          }
-        };
-      }
-    } catch(e) {}
-
-    function runSimulatedVolume() {
-      const checkVolSim = function() {
-        if (!isListening) return;
-        // Natural pulsing wave simulation
-        micVolume = 12 + Math.sin(Date.now() * 0.008) * 8 + Math.cos(Date.now() * 0.003) * 4;
-        requestAnimationFrame(checkVolSim);
-      };
-      checkVolSim();
-    }
-
-    window._startListening = function() {
-      if (isListening) return;
-      isListening = true;
-      currentSpeech = '';
-      audioChunks = [];
-      micVolume = 0;
-      hasSpoken = false;
-      let silenceStart = null;
-      const listenStartTime = Date.now();
-      window._updateState('listening');
-
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-        silenceTimer = null;
-      }
-      initAudioContext();
-
-      // Audio Mic Volume Tracking and Audio Recording
-      try {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          navigator.mediaDevices.getUserMedia({ audio: true })
-            .then(function(stream) {
-              audioStream = stream;
-              if (audioCtx) {
-                const source = audioCtx.createMediaStreamSource(stream);
-                analyser = audioCtx.createAnalyser();
-                analyser.fftSize = 32;
-                source.connect(analyser);
-                const bufferLength = analyser.frequencyBinCount;
-                dataArray = new Uint8Array(bufferLength);
-
-                const checkVol = function() {
-                  if (!isListening) return;
-                  analyser.getByteFrequencyData(dataArray);
-                  let sum = 0;
-                  for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-                  micVolume = sum / bufferLength;
-
-                  if (micVolume > 6.0) {
-                    hasSpoken = true;
-                  }
-
-                  if (hasSpoken) {
-                    if (micVolume < 3.5) {
-                      if (!silenceStart) {
-                        silenceStart = Date.now();
-                      } else if (Date.now() - silenceStart > 2500) {
-                        if (Date.now() - listenStartTime > 3000) {
-                          window._stopListening();
-                        }
-                      }
-                    } else {
-                      silenceStart = null;
-                    }
-                  } else if (Date.now() - listenStartTime > 8000) {
-                    window._stopListening();
-                  }
-
-                  requestAnimationFrame(checkVol);
-                };
-                checkVol();
-              }
-
-              // Start MediaRecorder if supported
-              try {
-                if (window.MediaRecorder) {
-                  mediaRecorder = new MediaRecorder(stream);
-                  mediaRecorder.ondataavailable = function(e) {
-                    if (e.data && e.data.size > 0) {
-                      audioChunks.push(e.data);
-                    }
-                  };
-                  mediaRecorder.start(200);
-                }
-              } catch(mrErr) {}
-            })
-            .catch(function(err) {
-              runSimulatedVolume();
-            });
-        } else {
-          runSimulatedVolume();
-        }
-      } catch(e) {
-        runSimulatedVolume();
-      }
-
-      if (recognition) {
-        try { recognition.abort(); } catch(e) {}
-        try { recognition.start(); } catch(e) {}
-      }
-    };
-
-    window._stopListening = function() {
-      if (!isListening) return;
-      isListening = false;
-      micVolume = 0;
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-        silenceTimer = null;
-      }
-
-      const recordedText = currentSpeech.trim();
-      currentSpeech = '';
-
-      if (recordedText) {
-        postRN({ type: 'stt_silence_detected', text: recordedText });
-      } else if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        try {
-          mediaRecorder.onstop = function() {
-            if (audioChunks.length > 0) {
-              const mime = mediaRecorder.mimeType || 'audio/webm';
-              const blob = new Blob(audioChunks, { type: mime });
-              const reader = new FileReader();
-              reader.onloadend = function() {
-                postRN({
-                  type: 'stt_audio_recorded',
-                  audioBase64: reader.result,
-                  mimeType: mime
-                });
-              };
-              reader.readAsDataURL(blob);
-            } else {
-              postRN({ type: 'stt_ended' });
-            }
-          };
-          mediaRecorder.stop();
-        } catch(e) {
-          postRN({ type: 'stt_ended' });
-        }
-      } else {
-        postRN({ type: 'stt_ended' });
-      }
-
-      if (audioStream) {
-        try {
-          audioStream.getTracks().forEach(function(track) { track.stop(); });
-        } catch(e) {}
-        audioStream = null;
-      }
-      if (recognition) {
-        try { recognition.stop(); } catch(e) {}
-      }
-    };
-
-    window._stopAll = function() {
-      isListening = false;
-      micVolume = 0;
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-        silenceTimer = null;
-      }
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        try { mediaRecorder.stop(); } catch(e) {}
-      }
-      if (audioStream) {
-        try {
-          audioStream.getTracks().forEach(function(track) { track.stop(); });
-        } catch(e) {}
-        audioStream = null;
-      }
-      try {
-        if (currentAudioSpeech) {
-          try { currentAudioSpeech.pause(); } catch(e) {}
-          currentAudioSpeech = null;
-        }
-        if (recognition) recognition.stop();
-      } catch(e) {}
-      window._updateState('idle');
-    };
-
-    // ── 🎨 WebGL/Canvas Waveform visualizer ──
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    let appState = 'idle'; // idle, listening, thinking, speaking
-    let rotation = 0;
-
-    function resize() {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      ctx.scale(dpr, dpr);
-    }
-    window.addEventListener('resize', resize);
-    resize();
-
-    window._updateState = function(newState) {
-      appState = newState;
-    };
-
-    function draw() {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = 'rgba(5, 11, 20, 0.25)'; // Dark trailing background
-      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
-      const cx = window.innerWidth / 2;
-      const cy = window.innerHeight / 2;
-      rotation += 0.015;
-
-      // Add a global lighter blend mode for glowing RGB
-      ctx.globalCompositeOperation = 'lighter';
-
-      if (appState === 'idle') {
-        const r = 50 + Math.sin(Date.now() * 0.0035) * 4;
-        const grad = ctx.createRadialGradient(cx, cy, r * 0.1, cx, cy, r);
-        grad.addColorStop(0, 'rgba(255, 0, 100, 0.85)');
-        grad.addColorStop(0.4, 'rgba(0, 255, 100, 0.35)');
-        grad.addColorStop(1, 'rgba(0, 100, 255, 0.0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI*2);
-        ctx.fill();
-
-      } else if (appState === 'listening') {
-        const baseRadius = 60 + micVolume * 0.65;
-        
-        for (let i = 0; i < 3; i++) {
-          const shift = i * Math.PI / 1.5 + rotation * (1 + i * 0.3);
-          // Pure RGB glowing lines
-          ctx.strokeStyle = i === 0 ? 'rgba(255, 50, 50, 0.8)' : i === 1 ? 'rgba(50, 255, 50, 0.8)' : 'rgba(50, 100, 255, 0.8)';
-          ctx.lineWidth = 4.5;
-          ctx.beginPath();
-          for (let angle = 0; angle < Math.PI * 2; angle += 0.08) {
-            const radNoise = Math.sin(angle * 5 + shift) * (12 + micVolume * 0.25);
-            const r = baseRadius + radNoise;
-            const x = cx + Math.cos(angle) * r;
-            const y = cy + Math.sin(angle) * r;
-            if (angle === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          }
-          ctx.closePath();
-          ctx.stroke();
-        }
-
-        const grad = ctx.createRadialGradient(cx, cy, baseRadius * 0.1, cx, cy, baseRadius * 0.6);
-        grad.addColorStop(0, 'rgba(16, 185, 129, 0.9)');
-        grad.addColorStop(0.5, 'rgba(6, 182, 212, 0.5)');
-        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(cx, cy, baseRadius * 0.6, 0, Math.PI*2);
-        ctx.fill();
-
-      } else if (appState === 'thinking') {
-        // Rotating purple cosmic portal
-        const r = 65;
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(rotation * 1.5);
-        
-        const grad = ctx.createRadialGradient(0, 0, r * 0.15, 0, 0, r * 1.0);
-        grad.addColorStop(0, 'rgba(168, 85, 247, 0.9)');
-        grad.addColorStop(0.5, 'rgba(99, 102, 241, 0.55)');
-        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(0, 0, r, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.strokeStyle = 'rgba(236, 72, 153, 0.6)';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        for (let angle = 0; angle < Math.PI * 2; angle += 0.05) {
-          const rad = r * 0.85 + Math.cos(angle * 7 + rotation * 6) * 5;
-          const x = Math.cos(angle) * rad;
-          const y = Math.sin(angle) * rad;
-          if (angle === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.closePath();
-        ctx.stroke();
-        ctx.restore();
-
-      } else if (appState === 'speaking') {
-        // Bouncing blue/indigo frequency waves
-        const baseRadius = 66 + Math.sin(Date.now() * 0.015) * 9;
-        
-        for (let i = 0; i < 2; i++) {
-          const shift = i * Math.PI + rotation * 3.0;
-          ctx.strokeStyle = i === 0 ? 'rgba(56, 189, 248, 0.65)' : 'rgba(236, 72, 153, 0.5)';
-          ctx.lineWidth = 4.0;
-          ctx.beginPath();
-          for (let angle = 0; angle < Math.PI * 2; angle += 0.08) {
-            const radNoise = Math.sin(angle * 8 + shift) * 14;
-            const r = baseRadius + radNoise;
-            const x = cx + Math.cos(angle) * r;
-            const y = cy + Math.sin(angle) * r;
-            if (angle === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          }
-          ctx.closePath();
-          ctx.stroke();
-        }
-
-        const grad = ctx.createRadialGradient(cx, cy, baseRadius * 0.15, cx, cy, baseRadius * 0.7);
-        grad.addColorStop(0, 'rgba(56, 189, 248, 0.95)');
-        grad.addColorStop(0.5, 'rgba(236, 72, 153, 0.5)');
-        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(cx, cy, baseRadius * 0.7, 0, Math.PI*2);
-        ctx.fill();
-      }
-
-      requestAnimationFrame(draw);
-    }
-
-    setTimeout(preloadAudioBuffers, 100);
-    requestAnimationFrame(draw);
-    postRN({ type: 'audio_engine_ready' });
-  })();
-  </script>
-</body>
-</html>`;
-}
-
-const AUDIO_ENGINE_SOURCE = { html: buildAudioEngineHtml(), baseUrl: 'https://localhost' };
-
-const ASSISTANT_CONTEXT_PHRASES = [
-  'CoolPath',
-  'cool route',
-  'shaded route',
-  'heat safe route',
-  'city garden',
-  'Central Park',
-  'Times Square',
-  'Brooklyn',
-  'current location',
-  'walking',
-  'running',
-  'biking',
-  'driving',
+const CONTEXT_PHRASES = [
+  'CoolPath', 'cool route', 'shaded route', 'heat safe',
+  'Central Park', 'Times Square', 'Brooklyn', 'Manhattan',
+  'current location', 'walking', 'running', 'biking', 'driving',
+  'navigate', 'plan route', 'go to', 'take me to',
 ];
 
-function cleanSpokenText(text: string): string {
-  return text.replace(/[*_~`#>-]/g, ' ').replace(/\s+/g, ' ').trim();
+function cleanForSpeech(text: string): string {
+  return text
+    .replace(/[*_~`#>•\-]/g, ' ')
+    .replace(/\n+/g, '. ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function normalizeTranscript(text: string): string {
@@ -609,6 +76,187 @@ function normalizeTranscript(text: string): string {
     .replace(/\bciti\s+garden\b/gi, 'city garden')
     .trim();
 }
+
+// Animated Orb Component
+const VoiceOrb: React.FC<{ state: AssistantState; micVolume: number }> = ({ state, micVolume }) => {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  const glowAnim = useRef(new Animated.Value(0)).current;
+  const ringScale1 = useRef(new Animated.Value(1)).current;
+  const ringScale2 = useRef(new Animated.Value(1)).current;
+  const ringScale3 = useRef(new Animated.Value(1)).current;
+  const ringOpacity1 = useRef(new Animated.Value(0.6)).current;
+  const ringOpacity2 = useRef(new Animated.Value(0.4)).current;
+  const ringOpacity3 = useRef(new Animated.Value(0.2)).current;
+
+  useEffect(() => {
+    pulseAnim.stopAnimation();
+    rotateAnim.stopAnimation();
+    glowAnim.stopAnimation();
+    ringScale1.stopAnimation();
+    ringScale2.stopAnimation();
+    ringScale3.stopAnimation();
+
+    if (state === 'idle') {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.05, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0.95, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ).start();
+      Animated.timing(glowAnim, { toValue: 0.3, duration: 600, useNativeDriver: true }).start();
+    } else if (state === 'listening') {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.15, duration: 400, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0.9, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ).start();
+      Animated.timing(glowAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+      // Ripple rings
+      const createRipple = (scale: Animated.Value, opacity: Animated.Value, delay: number) =>
+        Animated.loop(
+          Animated.sequence([
+            Animated.delay(delay),
+            Animated.parallel([
+              Animated.timing(scale, { toValue: 2.2, duration: 1800, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+              Animated.timing(opacity, { toValue: 0, duration: 1800, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+            ]),
+            Animated.parallel([
+              Animated.timing(scale, { toValue: 1, duration: 0, useNativeDriver: true }),
+              Animated.timing(opacity, { toValue: 0.6, duration: 0, useNativeDriver: true }),
+            ]),
+          ])
+        );
+      createRipple(ringScale1, ringOpacity1, 0).start();
+      createRipple(ringScale2, ringOpacity2, 600).start();
+      createRipple(ringScale3, ringOpacity3, 1200).start();
+    } else if (state === 'thinking') {
+      Animated.loop(
+        Animated.timing(rotateAnim, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: true })
+      ).start();
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.08, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0.92, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ).start();
+      Animated.timing(glowAnim, { toValue: 0.7, duration: 400, useNativeDriver: true }).start();
+    } else if (state === 'speaking') {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.12, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0.88, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ).start();
+      Animated.timing(glowAnim, { toValue: 0.85, duration: 300, useNativeDriver: true }).start();
+      // Gentle ripples for speaking
+      Animated.loop(
+        Animated.sequence([
+          Animated.parallel([
+            Animated.timing(ringScale1, { toValue: 1.8, duration: 1200, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+            Animated.timing(ringOpacity1, { toValue: 0, duration: 1200, useNativeDriver: true }),
+          ]),
+          Animated.parallel([
+            Animated.timing(ringScale1, { toValue: 1, duration: 0, useNativeDriver: true }),
+            Animated.timing(ringOpacity1, { toValue: 0.4, duration: 0, useNativeDriver: true }),
+          ]),
+        ])
+      ).start();
+    }
+
+    return () => {
+      pulseAnim.stopAnimation();
+      rotateAnim.stopAnimation();
+      glowAnim.stopAnimation();
+      ringScale1.stopAnimation();
+      ringScale2.stopAnimation();
+      ringScale3.stopAnimation();
+    };
+  }, [state]);
+
+  const spin = rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  const orbColors = {
+    idle: { bg: '#1e293b', border: 'rgba(99, 102, 241, 0.4)', glow: 'rgba(99, 102, 241, 0.3)' },
+    listening: { bg: '#065f46', border: '#10B981', glow: 'rgba(16, 185, 129, 0.5)' },
+    thinking: { bg: '#4c1d95', border: '#A855F7', glow: 'rgba(168, 85, 247, 0.4)' },
+    speaking: { bg: '#0c4a6e', border: '#38BDF8', glow: 'rgba(56, 189, 248, 0.4)' },
+  };
+
+  const colors = orbColors[state];
+
+  const ringColor = state === 'listening' ? 'rgba(16, 185, 129, 0.4)' : state === 'speaking' ? 'rgba(56, 189, 248, 0.3)' : 'transparent';
+
+  return (
+    <View style={styles.orbContainer}>
+      {/* Ripple rings */}
+      {(state === 'listening' || state === 'speaking') && (
+        <>
+          <Animated.View style={[styles.rippleRing, { transform: [{ scale: ringScale1 }], opacity: ringOpacity1, borderColor: ringColor }]} />
+          <Animated.View style={[styles.rippleRing, { transform: [{ scale: ringScale2 }], opacity: ringOpacity2, borderColor: ringColor }]} />
+          <Animated.View style={[styles.rippleRing, { transform: [{ scale: ringScale3 }], opacity: ringOpacity3, borderColor: ringColor }]} />
+        </>
+      )}
+
+      {/* Glow backdrop */}
+      <Animated.View style={[styles.orbGlow, { opacity: glowAnim, backgroundColor: colors.glow }]} />
+
+      {/* Main orb */}
+      <Animated.View
+        style={[
+          styles.orbMain,
+          {
+            backgroundColor: colors.bg,
+            borderColor: colors.border,
+            transform: [{ scale: pulseAnim }, ...(state === 'thinking' ? [{ rotate: spin }] : [])],
+          },
+        ]}
+      >
+        <Ionicons
+          name={state === 'listening' ? 'mic' : state === 'thinking' ? 'sparkles' : state === 'speaking' ? 'volume-high' : 'mic-outline'}
+          size={32}
+          color={state === 'idle' ? '#94a3b8' : '#ffffff'}
+        />
+      </Animated.View>
+    </View>
+  );
+};
+
+// Message Bubble Component
+const MessageBubble: React.FC<{ message: AssistantChatMessage; isLatest: boolean }> = ({ message, isLatest }) => {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 350, easing: Easing.out(Easing.back(1.2)), useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  if (message.role === 'user') {
+    return (
+      <Animated.View style={[styles.userBubble, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+        <Text style={styles.userBubbleText}>{message.content}</Text>
+      </Animated.View>
+    );
+  }
+
+  return (
+    <Animated.View style={[styles.assistantBubble, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      <View style={styles.assistantBubbleHeader}>
+        <View style={styles.assistantAvatarSmall}>
+          <Ionicons name="sparkles" size={10} color="#10B981" />
+        </View>
+        <Text style={styles.assistantLabel}>CoolPath</Text>
+      </View>
+      <Text style={styles.assistantBubbleText}>
+        {message.display_text || message.content}
+      </Text>
+    </Animated.View>
+  );
+};
 
 export const CoolPathAssistantModal: React.FC<CoolPathAssistantModalProps> = ({
   visible,
@@ -623,191 +271,254 @@ export const CoolPathAssistantModal: React.FC<CoolPathAssistantModalProps> = ({
 }) => {
   const [messages, setMessages] = useState<AssistantChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const [isThinking, setIsThinking] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [assistantState, setAssistantState] = useState<AssistantState>('idle');
   const [isMuted, setIsMuted] = useState(false);
   const [pendingAction, setPendingAction] = useState<any>(null);
   const [liveTranscript, setLiveTranscript] = useState('');
-  const [showTextBox, setShowTextBox] = useState(false);
+  const [showKeyboard, setShowKeyboard] = useState(false);
+  const [micVolume, setMicVolume] = useState(0);
+  const [showTripConfig, setShowTripConfig] = useState(false);
+  const [selectedActivity, setSelectedActivity] = useState<ActivityOption>('walking');
+  const [selectedPace, setSelectedPace] = useState<PaceOption>('normal');
+  const [selectedMode, setSelectedMode] = useState<TripMode>('instant');
 
-  const audioEngineRef = useRef<WebView>(null);
-  const isListeningRef = useRef(false);
-  const isThinkingRef = useRef(false);
-  const isSpeakingRef = useRef(false);
-  const safetyTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const listenTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const hasSpokenGreeting = useRef(false);
-  const hasStartedListeningAfterGreeting = useRef(false);
+  const stateRef = useRef<AssistantState>('idle');
+  const isSubmittingRef = useRef(false);
   const latestTranscriptRef = useRef('');
-  const isSubmittingSpeechRef = useRef(false);
-  const suppressRecognitionEventsRef = useRef(false);
   const activeSessionRef = useRef(0);
-  const speechFinishCallbackRef = useRef<(() => void) | null>(null);
-
+  const listenTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
-  const micWaveAnim = useRef(new Animated.Value(0)).current;
+  const hasGreetedRef = useRef(false);
 
+  // Animation values
+  const containerFade = useRef(new Animated.Value(0)).current;
+  const headerSlide = useRef(new Animated.Value(-60)).current;
+  const controlsSlide = useRef(new Animated.Value(100)).current;
+
+  const setState = useCallback((s: AssistantState) => {
+    stateRef.current = s;
+    setAssistantState(s);
+  }, []);
+
+  // Entrance animation
   useEffect(() => {
-    if (isListening) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(micWaveAnim, { toValue: 1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-          Animated.timing(micWaveAnim, { toValue: -1, duration: 1600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-          Animated.timing(micWaveAnim, { toValue: 0, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        ])
-      ).start();
+    if (visible) {
+      Animated.parallel([
+        Animated.timing(containerFade, { toValue: 1, duration: 400, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+        Animated.spring(headerSlide, { toValue: 0, tension: 60, friction: 12, useNativeDriver: true }),
+        Animated.spring(controlsSlide, { toValue: 0, tension: 50, friction: 12, useNativeDriver: true }),
+      ]).start();
     } else {
-      micWaveAnim.stopAnimation();
-      Animated.timing(micWaveAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
+      containerFade.setValue(0);
+      headerSlide.setValue(-60);
+      controlsSlide.setValue(100);
     }
-  }, [isListening]);
+  }, [visible]);
 
+  // Speech recognition event listeners
   useEffect(() => {
-    const speechRecognitionEvents = ExpoSpeechRecognitionModule as any;
-    const subscriptions = [
-      speechRecognitionEvents.addListener('start', () => {
-        if (!suppressRecognitionEventsRef.current && isListeningRef.current) {
-          setIsListening(true);
-          updateEngineState('listening');
+    const speechModule = ExpoSpeechRecognitionModule as any;
+    const subs = [
+      speechModule.addListener('start', () => {
+        if (stateRef.current === 'listening') {
+          setLiveTranscript('');
         }
       }),
-      speechRecognitionEvents.addListener('result', (event: any) => {
-        if (suppressRecognitionEventsRef.current || !isListeningRef.current) return;
+      speechModule.addListener('result', (event: any) => {
+        if (stateRef.current !== 'listening') return;
 
-        const rawTranscript = event.results?.[0]?.transcript || '';
-        const bestTranscript = normalizeTranscript(rawTranscript);
+        const results = event.results || [];
+        const isFinal = event.isFinal || (results.length > 0 && results[results.length - 1]?.isFinal);
 
-        if (!bestTranscript) return;
-        latestTranscriptRef.current = bestTranscript;
-        setLiveTranscript(bestTranscript);
+        // Get the best transcript - take the last result's transcript for incremental updates
+        let bestText = '';
+        for (const r of results) {
+          if (r.transcript) {
+            bestText = r.transcript;
+          }
+        }
 
-        if (event.isFinal && bestTranscript.length >= 2 && !isSubmittingSpeechRef.current) {
-          isSubmittingSpeechRef.current = true;
-          handleSendPrompt(bestTranscript);
+        const normalized = normalizeTranscript(bestText);
+        if (!normalized) return;
+
+        latestTranscriptRef.current = normalized;
+        setLiveTranscript(normalized);
+
+        // Reset silence timer on each new result
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+        }
+
+        // If final result from recognition engine, submit immediately
+        if (isFinal && normalized.length > 1) {
+          submitTranscript(normalized);
+        } else {
+          // Wait for 2s of silence after last partial to auto-submit
+          silenceTimerRef.current = setTimeout(() => {
+            const current = latestTranscriptRef.current.trim();
+            if (current && stateRef.current === 'listening' && !isSubmittingRef.current) {
+              submitTranscript(current);
+            }
+          }, 2000);
         }
       }),
-      speechRecognitionEvents.addListener('end', () => {
-        if (suppressRecognitionEventsRef.current) return;
-        const fallbackTranscript = latestTranscriptRef.current.trim();
-        if (isListeningRef.current && fallbackTranscript && !isSubmittingSpeechRef.current) {
-          isSubmittingSpeechRef.current = true;
-          handleSendPrompt(fallbackTranscript);
+      speechModule.addListener('end', () => {
+        if (stateRef.current === 'listening') {
+          // Recognition ended - submit whatever we have
+          const transcript = latestTranscriptRef.current.trim();
+          if (transcript && !isSubmittingRef.current) {
+            submitTranscript(transcript);
+          } else if (!isSubmittingRef.current) {
+            setState('idle');
+          }
+        }
+      }),
+      speechModule.addListener('error', (event: any) => {
+        if (event.error === 'aborted') return;
+        if (event.error === 'no-speech') {
+          // Try the persisted audio file via backend
+          setState('idle');
+          setLiveTranscript('');
           return;
         }
-        isListeningRef.current = false;
-        setIsListening(false);
-        if (!isThinkingRef.current && !isSpeakingRef.current) {
-          updateEngineState('idle');
+        console.warn('[STT Error]', event.error);
+        setState('idle');
+        setLiveTranscript('');
+      }),
+      speechModule.addListener('volumechange', (event: any) => {
+        if (stateRef.current === 'listening') {
+          const vol = Math.max(0, (event.value + 2) * 10);
+          setMicVolume(vol);
         }
       }),
-      speechRecognitionEvents.addListener('error', (event: any) => {
-        if (suppressRecognitionEventsRef.current || event.error === 'aborted') return;
-        
-        // Suppress expected silence timeouts from cluttering the console
-        if (event.error !== 'no-speech') {
-          console.warn('[VoiceAssistant STT Error]', event.error, event.message);
-        }
-        
-        isListeningRef.current = false;
-        setIsListening(false);
-        if (!isThinkingRef.current && !isSpeakingRef.current) {
-          updateEngineState('idle');
+      speechModule.addListener('audioend', async (event: any) => {
+        // Backend transcription as backup when on-device didn't produce a good result
+        if (isSubmittingRef.current) return;
+
+        const onDeviceTranscript = latestTranscriptRef.current.trim();
+
+        // If on-device already got a good result (3+ chars), use it directly
+        if (onDeviceTranscript.length >= 3) {
+          if (!isSubmittingRef.current) {
+            submitTranscript(onDeviceTranscript);
+          }
+          return;
         }
 
-        if (event.error === 'no-speech' || event.error === 'audio-capture') {
-          const errMsg: AssistantChatMessage = {
-            role: 'assistant',
-            content: "I didn't quite catch that. Could you please repeat?",
-            display_text:
-              "⚠️ **No speech detected**\n\nI couldn't hear you clearly. Please try again or tap the keyboard icon to type.",
-            suggested_replies: ['Plan route to Central Park', 'Check weather'],
-            timestamp: Date.now(),
-          };
-          setMessages((prev) => [...prev, errMsg]);
-          speakText("I didn't quite catch that. Could you please repeat?");
+        // Otherwise try backend transcription from audio file
+        if (event.uri) {
+          try {
+            setState('thinking');
+            setLiveTranscript('Processing speech...');
+            const base64Audio = await FileSystem.readAsStringAsync(event.uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            try { await FileSystem.deleteAsync(event.uri, { idempotent: true }); } catch {}
+
+            const mimeType = Platform.OS === 'ios' ? 'audio/wav' : 'audio/amr';
+            const transcript = await transcribeAudio(base64Audio, mimeType);
+
+            if (transcript && transcript.trim().length >= 2) {
+              submitTranscript(transcript.trim());
+            } else if (onDeviceTranscript) {
+              submitTranscript(onDeviceTranscript);
+            } else {
+              setState('idle');
+              setLiveTranscript('');
+              addAssistantMessage(
+                "I didn't catch that. Please try again or tap the keyboard icon to type.",
+                "I couldn't hear you clearly. Please try again or use the keyboard.",
+                ['Plan route to Central Park', 'Check weather']
+              );
+            }
+          } catch (err) {
+            if (onDeviceTranscript) {
+              submitTranscript(onDeviceTranscript);
+            } else {
+              setState('idle');
+              setLiveTranscript('');
+            }
+          }
         }
       }),
     ];
 
-    return () => {
-      subscriptions.forEach((subscription) => subscription?.remove?.());
-    };
+    return () => { subs.forEach((s: any) => s?.remove?.()); };
   }, []);
 
-  const updateEngineState = (state: 'idle' | 'listening' | 'thinking' | 'speaking') => {
-    audioEngineRef.current?.injectJavaScript(`window._updateState && window._updateState('${state}'); true;`);
+  const submitTranscript = useCallback((text: string) => {
+    if (isSubmittingRef.current || !text.trim()) return;
+    isSubmittingRef.current = true;
+    clearTimers();
+    handleSendPrompt(text.trim());
+  }, []);
+
+  const clearTimers = () => {
+    if (listenTimerRef.current) { clearTimeout(listenTimerRef.current); listenTimerRef.current = null; }
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
   };
 
-  const playAudio = (effect: 'intro' | 'ready' | 'start' | 'close') => {
-    audioEngineRef.current?.injectJavaScript(`window._playEffect && window._playEffect('${effect}'); true;`);
+  const addAssistantMessage = (spoken: string, display: string, suggestions: string[], action?: string, actionData?: any) => {
+    const msg: AssistantChatMessage = {
+      role: 'assistant',
+      content: spoken,
+      display_text: display,
+      action: action || null,
+      action_data: actionData || null,
+      suggested_replies: suggestions,
+      timestamp: Date.now(),
+    };
+    setMessages(prev => [...prev, msg]);
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 150);
   };
 
-  const clearListenTimer = () => {
-    if (listenTimerRef.current) {
-      clearTimeout(listenTimerRef.current);
-      listenTimerRef.current = null;
-    }
-  };
+  const shouldAutoListenRef = useRef(true);
 
-  const buildSpeechContext = () => {
-    return Array.from(
-      new Set(
-        [
-          ...ASSISTANT_CONTEXT_PHRASES,
-          currentOriginText,
-          currentDestText,
-          pendingAction?.origin,
-          pendingAction?.destination,
-        ]
-          .filter((item): item is string => typeof item === 'string' && item.trim().length > 1)
-          .map((item) => item.trim())
-      )
-    );
-  };
-
-  const speakGreetingOnce = () => {
-    if (hasSpokenGreeting.current) return;
-    hasSpokenGreeting.current = true;
-    if (safetyTimerRef.current) {
-      clearTimeout(safetyTimerRef.current);
-      safetyTimerRef.current = null;
-    }
-    speakText("Hi! I'm CoolPath Assistant. Where would you like to go today?");
-  };
-
-  const speakText = (text: string, onFinish?: () => void) => {
-    stopListening({ suppressRecognitionEvents: true, preserveEngineState: true });
+  const speakText = useCallback((text: string, onDone?: () => void, skipAutoListen?: boolean) => {
     if (isMuted || !text) {
-      isSpeakingRef.current = false;
-      setIsSpeaking(false);
-      if (!isThinkingRef.current) {
-        updateEngineState('idle');
-      }
-      onFinish?.();
+      setState('idle');
+      onDone?.();
       return;
     }
-    isSpeakingRef.current = true;
-    setIsSpeaking(true);
-    updateEngineState('speaking');
-    const cleanSpoken = cleanSpokenText(text);
 
-    speechFinishCallbackRef.current = onFinish || null;
-    audioEngineRef.current?.injectJavaScript(`window._speakText && window._speakText(${JSON.stringify(cleanSpoken)}); true;`);
-  };
+    if (skipAutoListen) {
+      shouldAutoListenRef.current = false;
+    } else {
+      shouldAutoListenRef.current = true;
+    }
 
-  const startListening = async () => {
-    if (isThinkingRef.current || isSpeakingRef.current) return;
-    if (isListeningRef.current) return;
+    setState('speaking');
+    const cleanText = cleanForSpeech(text);
 
-    suppressRecognitionEventsRef.current = false;
-    isSubmittingSpeechRef.current = false;
+    Speech.speak(cleanText, {
+      language: 'en-US',
+      pitch: 1.0,
+      rate: Platform.OS === 'ios' ? 0.52 : 0.95,
+      onDone: () => {
+        setState('idle');
+        onDone?.();
+        // Auto-listen after speaking (conversational loop) — skip if route is being executed
+        if (shouldAutoListenRef.current && !isMuted && visible) {
+          setTimeout(() => startListening(), 600);
+        }
+      },
+      onError: () => {
+        setState('idle');
+        onDone?.();
+      },
+    });
+  }, [isMuted, visible]);
+
+  const startListening = useCallback(async () => {
+    if (stateRef.current === 'thinking' || stateRef.current === 'speaking') return;
+    if (stateRef.current === 'listening') return;
+
+    isSubmittingRef.current = false;
     latestTranscriptRef.current = '';
-    isListeningRef.current = true;
-    setIsListening(true);
     setLiveTranscript('');
-    playAudio('ready');
-    updateEngineState('listening');
+    setMicVolume(0);
+    setState('listening');
 
     try {
       if (Platform.OS === 'ios') {
@@ -822,30 +533,24 @@ export const CoolPathAssistantModal: React.FC<CoolPathAssistantModalProps> = ({
 
       const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
       if (!permission.granted) {
-        isListeningRef.current = false;
-        setIsListening(false);
-        updateEngineState('idle');
-        const errMsg: AssistantChatMessage = {
-          role: 'assistant',
-          content: 'Microphone permission is required for voice commands.',
-          display_text:
-            '🎙️ **Microphone permission needed**\n\nPlease allow microphone and speech recognition access, or use Keyboard Mode.',
-          suggested_replies: ['Keyboard Mode', 'Plan route to Central Park'],
-          timestamp: Date.now(),
-        };
-        setMessages((prev) => [...prev, errMsg]);
+        setState('idle');
+        addAssistantMessage(
+          'Microphone permission needed. Please allow access or use keyboard mode.',
+          'Microphone permission is required for voice commands. Please enable it in settings or use keyboard mode.',
+          ['Use keyboard', 'Plan route to Central Park']
+        );
         return;
       }
 
-      let googleServicePackage: string | undefined = undefined;
+      let androidService: string | undefined;
       if (Platform.OS === 'android') {
         try {
           const services = ExpoSpeechRecognitionModule.getSpeechRecognitionServices();
-          googleServicePackage =
+          androidService =
             services.find((s: string) => s.includes('googlequicksearchbox')) ||
             services.find((s: string) => s.includes('com.google.android.as')) ||
             services.find((s: string) => s.includes('google'));
-        } catch (e) {}
+        } catch {}
       }
 
       ExpoSpeechRecognitionModule.start({
@@ -853,141 +558,100 @@ export const CoolPathAssistantModal: React.FC<CoolPathAssistantModalProps> = ({
         interimResults: true,
         continuous: false,
         maxAlternatives: 1,
-        contextualStrings: buildSpeechContext(),
+        contextualStrings: [...CONTEXT_PHRASES, currentOriginText, currentDestText].filter(Boolean),
         addsPunctuation: true,
-        androidRecognitionServicePackage: googleServicePackage,
+        androidRecognitionServicePackage: androidService,
+        recordingOptions: { persist: true },
+        volumeChangeEventOptions: { enabled: true, intervalMillis: 80 },
         androidIntentOptions: {
           EXTRA_LANGUAGE_MODEL: 'free_form',
-          EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS: 2500,
+          EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS: 2000,
           EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 1800,
-          EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 1200,
+          EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 1500,
         },
         iosTaskHint: 'dictation',
       });
 
-      clearListenTimer();
+      // Safety timeout - auto submit after 12 seconds
+      clearTimers();
       listenTimerRef.current = setTimeout(() => {
         const transcript = latestTranscriptRef.current.trim();
-        if (isListeningRef.current && transcript && !isSubmittingSpeechRef.current) {
-          isSubmittingSpeechRef.current = true;
-          handleSendPrompt(transcript);
-        } else if (isListeningRef.current) {
-          stopListening();
+        if (stateRef.current === 'listening') {
+          if (transcript && !isSubmittingRef.current) {
+            submitTranscript(transcript);
+          } else {
+            stopListening();
+          }
         }
-      }, 14000);
+      }, 12000);
     } catch (err) {
-      console.warn('[VoiceAssistant STT Start Error]', err);
-      isListeningRef.current = false;
-      setIsListening(false);
-      updateEngineState('idle');
+      console.warn('[STT Start Error]', err);
+      setState('idle');
     }
-  };
+  }, [currentOriginText, currentDestText]);
 
-  const stopListening = (options?: { suppressRecognitionEvents?: boolean; preserveEngineState?: boolean }) => {
-    clearListenTimer();
-    if (options?.suppressRecognitionEvents) {
-      suppressRecognitionEventsRef.current = true;
-    }
-    isListeningRef.current = false;
-    setIsListening(false);
-    if (!options?.preserveEngineState && !isThinkingRef.current && !isSpeakingRef.current) {
-      updateEngineState('idle');
-    }
-    try {
-      ExpoSpeechRecognitionModule.stop();
-    } catch (e) {}
-    audioEngineRef.current?.injectJavaScript('window._stopListening && window._stopListening(); true;');
-  };
+  const stopListening = useCallback(() => {
+    clearTimers();
+    setState('idle');
+    setLiveTranscript('');
+    try { ExpoSpeechRecognitionModule.stop(); } catch {}
+  }, []);
 
-  const stopAll = () => {
+  const stopAll = useCallback(() => {
     activeSessionRef.current += 1;
-    suppressRecognitionEventsRef.current = true;
-    clearListenTimer();
-    isListeningRef.current = false;
-    isSpeakingRef.current = false;
-    isThinkingRef.current = false;
-    setIsListening(false);
-    setIsSpeaking(false);
-    setIsThinking(false);
-    if (safetyTimerRef.current) {
-      clearTimeout(safetyTimerRef.current);
-      safetyTimerRef.current = null;
-    }
-    speechFinishCallbackRef.current = null;
-    try {
-      ExpoSpeechRecognitionModule.abort();
-    } catch (e) {}
-    audioEngineRef.current?.injectJavaScript('window._stopAll && window._stopAll(); true;');
-  };
+    clearTimers();
+    isSubmittingRef.current = false;
+    setState('idle');
+    setLiveTranscript('');
+    setMicVolume(0);
+    try { ExpoSpeechRecognitionModule.abort(); } catch {}
+    try { Speech.stop(); } catch {}
+  }, []);
 
-
-  // Initial greeting welcome sequence
+  // Initial greeting
   useEffect(() => {
     if (visible) {
       activeSessionRef.current += 1;
-      suppressRecognitionEventsRef.current = false;
-      hasSpokenGreeting.current = false;
-      hasStartedListeningAfterGreeting.current = false;
+      hasGreetedRef.current = false;
+      isSubmittingRef.current = false;
 
-      const initialGreeting: AssistantChatMessage = {
+      const greeting: AssistantChatMessage = {
         role: 'assistant',
-        content: "Hi! I'm CoolPath Assistant. Tell me where you'd like to go, or ask for a shaded route!",
-        display_text:
-          "👋 **Hi! I'm CoolPath Assistant.**\n\nI specialize in heat-safe urban navigation, finding shaded corridors, and protecting you from asphalt heatwaves.\n\nWhere would you like to travel?",
-        suggested_replies: ['Plan route to Central Park', 'Times Square to Brooklyn', 'Check current weather'],
+        content: "Hi! I'm CoolPath Assistant. Where would you like to go today?",
+        display_text: "Hi! I'm CoolPath Assistant. I find heat-safe, shaded routes through the city.\n\nTell me your destination or ask about the weather.",
+        suggested_replies: ['Plan route to Central Park', 'Times Square to Brooklyn', 'Check weather'],
         timestamp: Date.now(),
       };
-      setMessages([initialGreeting]);
+      setMessages([greeting]);
 
-      const startSequence = () => {
-        playAudio('intro');
-        // Fallback only if the WebView never sends the sound completion event.
-        safetyTimerRef.current = setTimeout(() => {
-          speakGreetingOnce();
-        }, 7000);
-      };
-
-      const timer = setTimeout(startSequence, 250);
-      return () => {
-        clearTimeout(timer);
-        if (safetyTimerRef.current) {
-          clearTimeout(safetyTimerRef.current);
-          safetyTimerRef.current = null;
+      const timer = setTimeout(() => {
+        if (!hasGreetedRef.current) {
+          hasGreetedRef.current = true;
+          speakText("Hi! I'm CoolPath Assistant. Where would you like to go today?");
         }
-        stopAll();
-      };
+      }, 600);
+
+      return () => { clearTimeout(timer); stopAll(); };
     } else {
       stopAll();
     }
   }, [visible]);
 
-  const handleClose = () => {
-    stopAll();
-    playAudio('close');
-    onClose();
-  };
-
   const handleSendPrompt = async (textToSend: string) => {
-    if (!textToSend || !textToSend.trim() || isThinkingRef.current) return;
+    if (!textToSend?.trim() || stateRef.current === 'thinking') return;
 
-    const requestSession = activeSessionRef.current;
+    const session = activeSessionRef.current;
     const userText = normalizeTranscript(textToSend);
     setInputText('');
     setLiveTranscript('');
-    stopListening({ suppressRecognitionEvents: true, preserveEngineState: true });
+    stopListening();
 
-    const newMsgList: AssistantChatMessage[] = [
-      ...messages,
-      { role: 'user', content: userText, timestamp: Date.now() },
-    ];
-    setMessages(newMsgList);
-
+    const userMsg: AssistantChatMessage = { role: 'user', content: userText, timestamp: Date.now() };
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
     setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
 
-    playAudio('start');
-    isThinkingRef.current = true;
-    setIsThinking(true);
-    updateEngineState('thinking');
+    setState('thinking');
 
     const context: AssistantChatContext = {
       current_origin: currentOriginText,
@@ -999,15 +663,13 @@ export const CoolPathAssistantModal: React.FC<CoolPathAssistantModalProps> = ({
 
     try {
       const response = await callAssistantBackend(
-        newMsgList.map((m) => ({ role: m.role, content: m.content })),
+        newMessages.map(m => ({ role: m.role, content: m.content })),
         context
       );
 
-      if (requestSession !== activeSessionRef.current) return;
-
-      isThinkingRef.current = false;
-      setIsThinking(false);
-      isSubmittingSpeechRef.current = false;
+      if (session !== activeSessionRef.current) return;
+      isSubmittingRef.current = false;
+      setState('idle');
 
       const assistantMsg: AssistantChatMessage = {
         role: 'assistant',
@@ -1019,732 +681,886 @@ export const CoolPathAssistantModal: React.FC<CoolPathAssistantModalProps> = ({
         timestamp: Date.now(),
       };
 
-      setMessages((prev) => [...prev, assistantMsg]);
+      setMessages(prev => [...prev, assistantMsg]);
       setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
 
-      let routeActionToExecute: any = null;
+      let routeToExecute: any = null;
 
-      // Keep action plan persistent and display card for user confirmation
       if (response.action_data || response.action === 'confirm_route' || response.action === 'execute_route') {
         const actionData = response.action_data || {
           origin: currentOriginText,
           destination: currentDestText,
           activity: 'walking',
         };
-        
+
         if (response.action === 'execute_route') {
-          routeActionToExecute = actionData;
+          routeToExecute = actionData;
         } else {
           setPendingAction(actionData);
+          if (actionData.activity) setSelectedActivity(actionData.activity as ActivityOption);
+          setShowTripConfig(true);
         }
       }
 
+      const skipListen = response.action === 'execute_route';
       speakText(response.spoken_response, () => {
-        if (routeActionToExecute && requestSession === activeSessionRef.current) {
-          handleExecuteConfirmedRoute(routeActionToExecute);
+        if (routeToExecute && session === activeSessionRef.current) {
+          executeRoute(routeToExecute);
         }
-      });
+      }, skipListen);
     } catch (err) {
-      if (requestSession !== activeSessionRef.current) return;
-      isThinkingRef.current = false;
-      setIsThinking(false);
-      isSubmittingSpeechRef.current = false;
-      updateEngineState('idle');
-      const errMsg: AssistantChatMessage = {
-        role: 'assistant',
-        content: "I'm having trouble connecting right now. Please try again.",
-        display_text: "⚠️ **Connection Error**\n\nCould not reach CoolPath Assistant. Please check connection and try again.",
-        suggested_replies: ['Try again', 'Check weather'],
-        timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, errMsg]);
+      if (session !== activeSessionRef.current) return;
+      isSubmittingRef.current = false;
+      setState('idle');
+      addAssistantMessage(
+        "I'm having trouble connecting. Please try again.",
+        "Connection error. Please check your network and try again.",
+        ['Try again', 'Use keyboard']
+      );
     }
   };
 
-  const handleMicButtonPress = () => {
-    if (isSpeaking) {
-      stopAll();
-      return;
-    }
-    if (isListening) {
-      if (liveTranscript.trim()) {
-        handleSendPrompt(liveTranscript);
-      } else {
-        stopListening();
-      }
-    } else {
-      startListening();
-    }
-  };
-
-  const handleExecuteConfirmedRoute = (actionData: any) => {
+  const executeRoute = (actionData: any) => {
     const orig = actionData?.origin || currentOriginText;
     const dest = actionData?.destination || currentDestText;
-    const act = actionData?.activity || 'walking';
+    const act = actionData?.activity || selectedActivity;
     setPendingAction(null);
+    setShowTripConfig(false);
     stopAll();
-    playAudio('start');
-    onPlanRouteAction(orig, dest, act);
+    onPlanRouteAction(orig, dest, act, selectedPace, selectedMode);
     onClose();
   };
 
-  // Keep last message only for minimalist live UI feel
-  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-
-  const activeAction = (lastMsg?.action_data || pendingAction) as
-    | { origin?: string; destination?: string; activity?: string }
-    | null;
-
-  const getActivityMeta = (activity?: string) => {
-    const a = (activity || 'walking').toLowerCase();
-    if (a.includes('run')) return { icon: 'running' as const, label: 'Running' };
-    if (a.includes('bik') || a.includes('cycl')) return { icon: 'bicycle' as const, label: 'Biking' };
-    if (a.includes('driv') || a.includes('car')) return { icon: 'car' as const, label: 'Driving' };
-    return { icon: 'walking' as const, label: 'Walking' };
+  const handleMicPress = () => {
+    if (assistantState === 'speaking') {
+      Speech.stop();
+      setState('idle');
+      return;
+    }
+    if (assistantState === 'listening') {
+      const transcript = latestTranscriptRef.current.trim();
+      if (transcript) {
+        submitTranscript(transcript);
+      } else {
+        stopListening();
+      }
+      return;
+    }
+    if (assistantState === 'thinking') return;
+    startListening();
   };
 
-  const activityMeta = getActivityMeta(activeAction?.activity);
+  const handleClose = () => {
+    stopAll();
+    onClose();
+  };
+
+  const handleSuggestedReply = (reply: string) => {
+    isSubmittingRef.current = false;
+    handleSendPrompt(reply);
+  };
+
+  const lastMsg = messages[messages.length - 1];
+
+  const stateLabel = {
+    idle: 'Tap to speak',
+    listening: 'Listening...',
+    thinking: 'Processing...',
+    speaking: 'Speaking...',
+  }[assistantState];
 
   return (
-    <Modal visible={visible} animationType="fade" transparent={false} onRequestClose={handleClose}>
-      <View style={styles.container}>
-        {/* WebView Core Audio Engine */}
-        <WebView
-          ref={audioEngineRef}
-          originWhitelist={['*']}
-          source={AUDIO_ENGINE_SOURCE}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          mediaPlaybackRequiresUserAction={false}
-          allowsInlineMediaPlayback={true}
-          style={StyleSheet.absoluteFill}
-          onMessage={(event) => {
-            try {
-              const data = JSON.parse(event.nativeEvent.data);
-              if (data.type === 'effect_ended') {
-                if (data.name === 'intro') {
-                  speakGreetingOnce();
-                }
-              } else if (data.type === 'speech_ended') {
-                const onSpeechFinish = speechFinishCallbackRef.current;
-                speechFinishCallbackRef.current = null;
-                isSpeakingRef.current = false;
-                setIsSpeaking(false);
-                if (!isThinkingRef.current) {
-                  updateEngineState('idle');
-                }
-                onSpeechFinish?.();
-                if (hasSpokenGreeting.current && !hasStartedListeningAfterGreeting.current) {
-                  hasStartedListeningAfterGreeting.current = true;
-                  startListening();
-                } else if (
-                  messages.length > 0 && 
-                  messages[messages.length - 1].action === 'confirm_route'
-                ) {
-                  // Automatically start listening so the user can answer "Yes" or "No"
-                  startListening();
-                }
-              } else if (data.type === 'stt_transcript_update') {
-                if (isListeningRef.current) {
-                  setLiveTranscript(data.text);
-                }
-              } else if (data.type === 'stt_silence_detected') {
-                if (isListeningRef.current && data.text && data.text.trim()) {
-                  handleSendPrompt(data.text.trim());
-                }
-              } else if (data.type === 'stt_audio_recorded') {
-                if (data.audioBase64) {
-                  setLiveTranscript("🎙️ Analyzing speech...");
-                  isThinkingRef.current = true;
-                  setIsThinking(true);
-                  updateEngineState('thinking');
-                  transcribeAudio(data.audioBase64, data.mimeType)
-                    .then((transcript) => {
-                      if (transcript && transcript.trim()) {
-                        handleSendPrompt(transcript.trim());
-                      } else {
-                        isThinkingRef.current = false;
-                        isSubmittingSpeechRef.current = false;
-                        setIsThinking(false);
-                        updateEngineState('idle');
-                        setLiveTranscript("");
-                        const errMsg: AssistantChatMessage = {
-                          role: 'assistant',
-                          content: "I didn't quite catch that. Could you please repeat?",
-                          display_text: "⚠️ **No speech detected**\n\nI couldn't hear you clearly. Please try again or tap the keyboard icon to type.",
-                          suggested_replies: ['Plan route to Central Park', 'Check weather'],
-                          timestamp: Date.now(),
-                        };
-                        setMessages((prev) => [...prev, errMsg]);
-                        speakText("I didn't quite catch that. Could you please repeat?");
-                      }
-                    })
-                    .catch(() => {
-                      isThinkingRef.current = false;
-                      isSubmittingSpeechRef.current = false;
-                      setIsThinking(false);
-                      updateEngineState('idle');
-                      setLiveTranscript("");
-                      const errMsg: AssistantChatMessage = {
-                        role: 'assistant',
-                        content: "I didn't quite catch that. Could you please repeat?",
-                        display_text: "⚠️ **No speech detected**\n\nI couldn't hear you clearly. Please try again or tap the keyboard icon to type.",
-                        suggested_replies: ['Plan route to Central Park', 'Check weather'],
-                        timestamp: Date.now(),
-                      };
-                      setMessages((prev) => [...prev, errMsg]);
-                      speakText("I didn't quite catch that. Could you please repeat?");
-                    });
-                }
-              } else if (data.type === 'stt_ended') {
-                isListeningRef.current = false;
-                setIsListening(false);
-                if (!isThinkingRef.current && !isSpeakingRef.current) {
-                  updateEngineState('idle');
-                }
-              } else if (data.type === 'stt_error') {
-                console.warn("[VoiceAssistant STT Error]", data.error);
-              } else if (data.type === 'stt_not_supported') {
-                console.warn("[VoiceAssistant] WebSpeech not supported, falling back to MediaRecorder");
-              }
-            } catch (e) {}
-          }}
-          {...({
-            onPermissionRequest: (request: any) => {
-              request.grant();
-            }
-          } as any)}
-        />
-
-        {/* ── Immersive Glass Header Bar ── */}
-        <View style={styles.headerGlass}>
-          <View style={styles.headerBadge}>
-            <View style={styles.badgePulseGreen} />
-            <Text style={styles.badgeTxt}>LIVE SESSION</Text>
+    <Modal visible={visible} animationType="none" transparent={false} onRequestClose={handleClose}>
+      <Animated.View style={[styles.container, { opacity: containerFade }]}>
+        {/* Header */}
+        <Animated.View style={[styles.header, { transform: [{ translateY: headerSlide }] }]}>
+          <View style={styles.headerLeft}>
+            <View style={styles.liveBadge}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveText}>LIVE</Text>
+            </View>
           </View>
-
+          <Text style={styles.headerTitle}>CoolPath Assistant</Text>
           <View style={styles.headerRight}>
             <TouchableOpacity
-              style={styles.iconCircle}
-              onPress={() => {
-                if (!isMuted) stopAll();
-                setIsMuted((m) => !m);
-              }}
+              style={[styles.headerBtn, isMuted && styles.headerBtnActive]}
+              onPress={() => { if (!isMuted) stopAll(); setIsMuted(m => !m); }}
+              activeOpacity={0.7}
             >
-              <Ionicons
-                name={isMuted ? 'volume-mute' : 'volume-high'}
-                size={18}
-                color={isMuted ? '#EF4444' : '#10B981'}
-              />
+              <Ionicons name={isMuted ? 'volume-mute' : 'volume-high'} size={18} color={isMuted ? '#EF4444' : '#e2e8f0'} />
             </TouchableOpacity>
-
-            <TouchableOpacity style={styles.iconCircle} onPress={handleClose}>
-              <Ionicons name="close" size={18} color="#ffffff" />
+            <TouchableOpacity style={styles.headerBtn} onPress={handleClose} activeOpacity={0.7}>
+              <Ionicons name="close" size={20} color="#e2e8f0" />
             </TouchableOpacity>
           </View>
-        </View>
+        </Animated.View>
 
-        {/* ── Fluid Messaging Overlay (Top half of screen) ── */}
-        <View style={styles.conversationLayer}>
-          {lastMsg && (
-            <ScrollView 
-              contentContainerStyle={{ justifyContent: 'flex-end', flexGrow: 1 }}
-              showsVerticalScrollIndicator={false}
-              bounces={false}
-            >
-              <Animated.View style={styles.messageBubbleAnimated}>
-                {lastMsg.role === 'assistant' ? (
-                  <View style={styles.assistantSpeechRow}>
-                    <View style={styles.assistantSpark}>
-                      <Ionicons name="sparkles" size={10} color="#10B981" />
-                    </View>
-                    <Text style={styles.assistantSpeechTxt}>
-                      {lastMsg.display_text || lastMsg.content}
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.userSpeechRow}>
-                    <Text style={styles.userSpeechTxt}>{lastMsg.content}</Text>
-                  </View>
-                )}
+        {/* Messages */}
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.messagesArea}
+          contentContainerStyle={styles.messagesContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {messages.map((msg, i) => (
+            <MessageBubble key={`${msg.timestamp}-${i}`} message={msg} isLatest={i === messages.length - 1} />
+          ))}
 
-                {/* Action plan confirmation card */}
-                {Boolean(lastMsg.action_data || pendingAction) && (
-                  <View style={styles.floatingActionCard}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                      <FontAwesome5 name="route" size={13} color="#10B981" style={{ marginRight: 8 }} />
-                      <Text style={styles.actionCardTitle}>Heat-Safe Route Prepared</Text>
-                    </View>
-                    <Text style={styles.actionCardBody}>
-                      From: <Text style={{ color: '#fff', fontWeight: '800' }}>{(lastMsg.action_data || pendingAction)?.origin || currentOriginText || 'Start Point'}</Text>
-                      {'\n'}To: <Text style={{ color: '#fff', fontWeight: '800' }}>{(lastMsg.action_data || pendingAction)?.destination || currentDestText || 'Destination'}</Text>
-                      {(lastMsg.action_data || pendingAction)?.activity ? `\nMode: ${((lastMsg.action_data || pendingAction)?.activity).toUpperCase()}` : ''}
-                    </Text>
-                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                      <TouchableOpacity
-                        style={styles.actionCardConfirmBtn}
-                        onPress={() => handleExecuteConfirmedRoute(lastMsg.action_data || pendingAction)}
-                        activeOpacity={0.8}
-                      >
-                        <Ionicons name="navigate" size={15} color="#ffffff" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionCardConfirmTxt}>Navigate Cool Route</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.actionCardCancelBtn}
-                        onPress={() => setPendingAction(null)}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.actionCardCancelTxt}>Dismiss</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-              </Animated.View>
-            </ScrollView>
-          )}
-
-          {isThinking && (
-            <View style={styles.thinkingBoxGlass}>
-              <ActivityIndicator size="small" color="#10B981" style={{ marginRight: 8 }} />
-              <Text style={styles.thinkingTxt}>CoolPath Assistant is planning...</Text>
-            </View>
-          )}
-        </View>
-
-        {/* ── Subtitle and Mic Control Section (Bottom half of screen) ── */}
-        <View style={styles.controlsLayer} pointerEvents="box-none">
-          {/* Live Subtitle bar reacting dynamically to real speech */}
-          {isListening && (
-            <View style={styles.liveSubtitlePill}>
-              <View style={styles.redDotRecording} />
-              <Text style={styles.liveSubtitleTxt}>
-                {liveTranscript || 'Listening... Speak destination'}
-              </Text>
+          {/* Thinking indicator */}
+          {assistantState === 'thinking' && (
+            <View style={styles.thinkingBubble}>
+              <View style={styles.thinkingDots}>
+                <ThinkingDot delay={0} />
+                <ThinkingDot delay={200} />
+                <ThinkingDot delay={400} />
+              </View>
             </View>
           )}
 
-          {/* Glowing Animated Voice Orb Tap Launcher */}
-          <TouchableOpacity
-            style={[
-              styles.micOrbButton,
-              isListening && styles.micOrbListening,
-              isThinking && styles.micOrbThinking,
-              isSpeaking && styles.micOrbSpeaking,
-            ]}
-            onPress={handleMicButtonPress}
-            activeOpacity={0.9}
-          >
-            <Animated.Image
-              source={require('../../assets/assistant.png')}
-              style={{
-                width: 44,
-                height: 44,
-                tintColor: isSpeaking ? '#ffffff' : undefined,
-                transform: [
-                  {
-                    rotate: micWaveAnim.interpolate({
-                      inputRange: [-1, 1],
-                      outputRange: ['-15deg', '15deg'],
-                    }),
-                  },
-                  {
-                    scale: micWaveAnim.interpolate({
-                      inputRange: [-1, 0, 1],
-                      outputRange: [0.9, 1, 0.9],
-                    }),
-                  },
-                ],
-              }}
-              resizeMode="contain"
+          {/* Trip config selector card */}
+          {showTripConfig && pendingAction && (
+            <TripConfigCard
+              actionData={pendingAction}
+              currentOrigin={currentOriginText}
+              currentDest={currentDestText}
+              selectedActivity={selectedActivity}
+              selectedPace={selectedPace}
+              selectedMode={selectedMode}
+              onActivityChange={setSelectedActivity}
+              onPaceChange={setSelectedPace}
+              onModeChange={setSelectedMode}
+              onConfirm={() => executeRoute({ ...pendingAction, activity: selectedActivity })}
+              onDismiss={() => { setPendingAction(null); setShowTripConfig(false); }}
             />
+          )}
+        </ScrollView>
+
+        {/* Controls */}
+        <Animated.View style={[styles.controls, { transform: [{ translateY: controlsSlide }] }]}>
+          {/* Live transcript */}
+          {assistantState === 'listening' && liveTranscript ? (
+            <View style={styles.transcriptPill}>
+              <View style={styles.recordingDot} />
+              <Text style={styles.transcriptText} numberOfLines={2}>{liveTranscript}</Text>
+            </View>
+          ) : null}
+
+          {/* Voice orb */}
+          <TouchableOpacity onPress={handleMicPress} activeOpacity={0.85} style={styles.orbTouchArea}>
+            <VoiceOrb state={assistantState} micVolume={micVolume} />
           </TouchableOpacity>
 
-          <Text style={styles.micStateLabel}>
-            {isListening
-              ? 'LIVE VOICE ACTIVE'
-              : isSpeaking
-              ? 'TAP ORB TO PAUSE VOICE'
-              : isThinking
-              ? 'PLANNING CORRIDORS'
-              : 'TAP ORB TO SPEAK'}
-          </Text>
+          <Text style={styles.stateLabel}>{stateLabel}</Text>
 
-          {/* Quick reply presets bar */}
-          {lastMsg && lastMsg.suggested_replies && (
+          {/* Suggested replies */}
+          {lastMsg?.suggested_replies && lastMsg.suggested_replies.length > 0 && assistantState === 'idle' && (
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              style={styles.suggestedScroll}
-              contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}
+              style={styles.suggestionsRow}
+              contentContainerStyle={styles.suggestionsContent}
             >
-              {lastMsg.suggested_replies.map((reply, index) => (
+              {lastMsg.suggested_replies.map((reply, i) => (
                 <TouchableOpacity
-                  key={index}
-                  style={styles.suggestedChip}
-                  onPress={() => handleSendPrompt(reply)}
-                  activeOpacity={0.8}
+                  key={i}
+                  style={styles.suggestionChip}
+                  onPress={() => handleSuggestedReply(reply)}
+                  activeOpacity={0.7}
                 >
-                  <Text style={styles.suggestedChipTxt}>{reply}</Text>
+                  <Text style={styles.suggestionText}>{reply}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
           )}
 
-          {/* Elegant Text Keyboard Toggle */}
-          <View style={styles.keyboardToggleBar}>
-            {showTextBox ? (
-              <View style={styles.keyboardInputRow}>
+          {/* Keyboard input */}
+          <View style={styles.inputArea}>
+            {showKeyboard ? (
+              <View style={styles.inputRow}>
                 <TextInput
-                  style={styles.keyboardTextInput}
-                  placeholder="Or type prompt here..."
+                  style={styles.textInput}
+                  placeholder="Type your message..."
                   placeholderTextColor="#64748b"
                   value={inputText}
                   onChangeText={setInputText}
                   onSubmitEditing={() => {
-                    handleSendPrompt(inputText);
-                    setShowTextBox(false);
+                    if (inputText.trim()) {
+                      isSubmittingRef.current = false;
+                      handleSendPrompt(inputText);
+                      setShowKeyboard(false);
+                    }
                   }}
                   returnKeyType="send"
+                  autoFocus
                 />
                 <TouchableOpacity
-                  style={styles.keyboardSendBtn}
+                  style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
                   onPress={() => {
-                    handleSendPrompt(inputText);
-                    setShowTextBox(false);
+                    if (inputText.trim()) {
+                      isSubmittingRef.current = false;
+                      handleSendPrompt(inputText);
+                      setShowKeyboard(false);
+                    }
                   }}
+                  disabled={!inputText.trim()}
+                  activeOpacity={0.7}
                 >
                   <Ionicons name="arrow-up" size={18} color="#ffffff" />
                 </TouchableOpacity>
+                <TouchableOpacity style={styles.closeKeyboardBtn} onPress={() => setShowKeyboard(false)}>
+                  <Ionicons name="mic" size={18} color="#94a3b8" />
+                </TouchableOpacity>
               </View>
             ) : (
-              <TouchableOpacity
-                style={styles.keyboardPillBtn}
-                onPress={() => setShowTextBox(true)}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="chatbox-ellipses-outline" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
-                <Text style={styles.keyboardPillTxt}>Keyboard Mode</Text>
+              <TouchableOpacity style={styles.keyboardToggle} onPress={() => setShowKeyboard(true)} activeOpacity={0.7}>
+                <Ionicons name="chatbox-outline" size={16} color="#64748b" />
+                <Text style={styles.keyboardToggleText}>Type instead</Text>
               </TouchableOpacity>
             )}
           </View>
+        </Animated.View>
+      </Animated.View>
+    </Modal>
+  );
+};
+
+// Thinking dots animation
+const ThinkingDot: React.FC<{ delay: number }> = ({ delay }) => {
+  const anim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(anim, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0.3, duration: 400, useNativeDriver: true }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, []);
+
+  return <Animated.View style={[styles.dot, { opacity: anim }]} />;
+};
+
+// Route action card
+const ACTIVITY_OPTIONS: { id: ActivityOption; label: string; icon: string }[] = [
+  { id: 'walking', label: 'Walk', icon: 'walking' },
+  { id: 'running', label: 'Run', icon: 'running' },
+  { id: 'biking', label: 'Bike', icon: 'bicycle' },
+  { id: 'driving', label: 'Drive', icon: 'car' },
+];
+
+const PACE_OPTIONS: { id: PaceOption; label: string }[] = [
+  { id: 'slow', label: 'Relaxed' },
+  { id: 'normal', label: 'Normal' },
+  { id: 'fast', label: 'Paced' },
+];
+
+const MODE_OPTIONS: { id: TripMode; label: string; desc: string }[] = [
+  { id: 'instant', label: 'Quick', desc: 'Leave now' },
+  { id: 'scheduled', label: 'Scheduled', desc: 'Optimal timing' },
+];
+
+const TripConfigCard: React.FC<{
+  actionData: any;
+  currentOrigin: string;
+  currentDest: string;
+  selectedActivity: ActivityOption;
+  selectedPace: PaceOption;
+  selectedMode: TripMode;
+  onActivityChange: (a: ActivityOption) => void;
+  onPaceChange: (p: PaceOption) => void;
+  onModeChange: (m: TripMode) => void;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}> = ({ actionData, currentOrigin, currentDest, selectedActivity, selectedPace, selectedMode, onActivityChange, onPaceChange, onModeChange, onConfirm, onDismiss }) => {
+  const slideAnim = useRef(new Animated.Value(40)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(slideAnim, { toValue: 0, tension: 60, friction: 10, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 350, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  const origin = actionData?.origin || currentOrigin || 'Current Location';
+  const destination = actionData?.destination || currentDest || 'Destination';
+
+  return (
+    <Animated.View style={[styles.actionCard, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      {/* Route header */}
+      <View style={styles.actionCardHeader}>
+        <FontAwesome5 name="route" size={14} color="#10B981" />
+        <Text style={styles.actionCardTitle}>Configure Trip</Text>
+      </View>
+
+      {/* Route display */}
+      <View style={styles.actionCardRoute}>
+        <View style={styles.routePoint}>
+          <View style={styles.routeDotGreen} />
+          <Text style={styles.routeText} numberOfLines={1}>{origin}</Text>
+        </View>
+        <View style={styles.routeLine} />
+        <View style={styles.routePoint}>
+          <View style={styles.routeDotRed} />
+          <Text style={styles.routeText} numberOfLines={1}>{destination}</Text>
         </View>
       </View>
-    </Modal>
+
+      {/* Trip Mode selector */}
+      <View style={styles.configSection}>
+        <Text style={styles.configLabel}>Trip Type</Text>
+        <View style={styles.configRow}>
+          {MODE_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.id}
+              style={[styles.configChip, selectedMode === opt.id && styles.configChipActive]}
+              onPress={() => onModeChange(opt.id)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.configChipText, selectedMode === opt.id && styles.configChipTextActive]}>{opt.label}</Text>
+              <Text style={[styles.configChipDesc, selectedMode === opt.id && styles.configChipDescActive]}>{opt.desc}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Activity selector */}
+      <View style={styles.configSection}>
+        <Text style={styles.configLabel}>Travel By</Text>
+        <View style={styles.configRow}>
+          {ACTIVITY_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.id}
+              style={[styles.activityChip, selectedActivity === opt.id && styles.activityChipActive]}
+              onPress={() => onActivityChange(opt.id)}
+              activeOpacity={0.7}
+            >
+              <FontAwesome5 name={opt.icon} size={12} color={selectedActivity === opt.id ? '#fff' : '#94a3b8'} />
+              <Text style={[styles.activityChipText, selectedActivity === opt.id && styles.activityChipTextActive]}>{opt.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Pace selector */}
+      <View style={styles.configSection}>
+        <Text style={styles.configLabel}>Pace</Text>
+        <View style={styles.configRow}>
+          {PACE_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.id}
+              style={[styles.configChip, selectedPace === opt.id && styles.configChipActive]}
+              onPress={() => onPaceChange(opt.id)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.configChipText, selectedPace === opt.id && styles.configChipTextActive]}>{opt.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Action buttons */}
+      <View style={styles.actionCardButtons}>
+        <TouchableOpacity style={styles.confirmBtn} onPress={onConfirm} activeOpacity={0.8}>
+          <Ionicons name="navigate" size={16} color="#fff" />
+          <Text style={styles.confirmBtnText}>Plan Route</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.dismissBtn} onPress={onDismiss} activeOpacity={0.8}>
+          <Text style={styles.dismissBtnText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#020617', // Immersive cosmic dark theme
+    backgroundColor: '#0f172a',
   },
-  hiddenAudioBridge: {
-    position: 'absolute',
-    width: 1,
-    height: 1,
-    opacity: 0,
-    pointerEvents: 'none',
-  },
-  headerGlass: {
+  // Header
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: Platform.OS === 'ios' ? 52 : 24,
-    paddingBottom: 14,
-    backgroundColor: 'rgba(15, 23, 42, 0.35)',
-    zIndex: 10,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 56 : 32,
+    paddingBottom: 16,
+    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
-  headerBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.25)',
+  headerLeft: {
+    width: 70,
   },
-  badgePulseGreen: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10B981',
-    marginRight: 6,
-  },
-  badgeTxt: {
-    color: '#10B981',
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.8,
+  headerTitle: {
+    color: '#e2e8f0',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   headerRight: {
     flexDirection: 'row',
     gap: 8,
-  },
-  iconCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  conversationLayer: {
-    flex: 1.1,
+    width: 70,
     justifyContent: 'flex-end',
-    paddingHorizontal: 20,
-    paddingBottom: 10,
-    zIndex: 5,
   },
-  messageBubbleAnimated: {
-    width: '100%',
-  },
-  assistantSpeechRow: {
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  assistantSpark: {
-    position: 'absolute',
-    left: -6,
-    top: -6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
-    borderColor: '#10B981',
+  headerBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  assistantSpeechTxt: {
-    color: '#e2e8f0',
-    fontSize: 14,
-    lineHeight: 21,
-    fontWeight: '500',
+  headerBtnActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
   },
-  userSpeechRow: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#10B981',
-    borderRadius: 18,
-    borderBottomRightRadius: 4,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    maxWidth: '85%',
-  },
-  userSpeechTxt: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  thinkingBoxGlass: {
+  liveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-    borderRadius: 14,
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(16, 185, 129, 0.2)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginTop: 8,
-    alignSelf: 'flex-start',
   },
-  thinkingTxt: {
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  floatingActionCard: {
-    marginTop: 10,
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    borderWidth: 1.5,
-    borderColor: '#10B981',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-  },
-  actionCardTitle: {
-    color: '#10B981',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  actionCardBody: {
-    color: '#94a3b8',
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 4,
-  },
-  actionCardConfirmBtn: {
-    flex: 1.3,
-    backgroundColor: '#10B981',
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionCardConfirmTxt: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  actionCardCancelBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    paddingVertical: 8,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  actionCardCancelTxt: {
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  controlsLayer: {
-    flex: 1.2,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingBottom: Platform.OS === 'ios' ? 44 : 24,
-    zIndex: 8,
-  },
-  liveSubtitlePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderWidth: 1,
-    borderColor: '#10B981',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    maxWidth: '85%',
-    marginBottom: 20,
-  },
-  redDotRecording: {
+  liveDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
+    backgroundColor: '#10B981',
+    marginRight: 5,
+  },
+  liveText: {
+    color: '#10B981',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  // Messages
+  messagesArea: {
+    flex: 1,
+  },
+  messagesContent: {
+    padding: 20,
+    paddingBottom: 10,
+  },
+  userBubble: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#6366f1',
+    borderRadius: 20,
+    borderBottomRightRadius: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    maxWidth: '80%',
+    marginBottom: 12,
+    shadowColor: '#6366f1',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+  },
+  userBubbleText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 20,
+  },
+  assistantBubble: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(30, 41, 59, 0.8)',
+    borderRadius: 20,
+    borderBottomLeftRadius: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    maxWidth: '88%',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  assistantBubbleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  assistantAvatarSmall: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
+  assistantLabel: {
+    color: '#10B981',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  assistantBubbleText: {
+    color: '#cbd5e1',
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: '400',
+  },
+  // Thinking
+  thinkingBubble: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(30, 41, 59, 0.6)',
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  thinkingDots: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  // Controls
+  controls: {
+    alignItems: 'center',
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+    paddingTop: 16,
+    backgroundColor: 'rgba(15, 23, 42, 0.98)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  transcriptPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    maxWidth: '85%',
+    marginBottom: 16,
+  },
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#EF4444',
     marginRight: 8,
   },
-  liveSubtitleTxt: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-    textAlign: 'center',
+  transcriptText: {
+    color: '#e2e8f0',
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
   },
-  micOrbButton: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
-    backgroundColor: '#1e293b',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+  // Orb
+  orbTouchArea: {
+    width: 120,
+    height: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  orbContainer: {
+    width: 88,
+    height: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  orbGlow: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+  },
+  orbMain: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
     elevation: 8,
   },
-  micOrbListening: {
-    backgroundColor: '#10B981',
-    borderColor: '#34d399',
+  rippleRing: {
+    position: 'absolute',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2,
   },
-  micOrbThinking: {
-    backgroundColor: '#A855F7',
-    borderColor: '#c084fc',
-  },
-  micOrbSpeaking: {
-    backgroundColor: '#38BDF8',
-    borderColor: '#7dd3fc',
-  },
-  micStateLabel: {
+  stateLabel: {
     color: '#64748b',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.0,
+    fontSize: 12,
+    fontWeight: '600',
     marginTop: 10,
-    marginBottom: 20,
+    letterSpacing: 0.3,
   },
-  suggestedScroll: {
-    maxHeight: 34,
+  // Suggestions
+  suggestionsRow: {
+    maxHeight: 40,
     width: SW,
-    marginBottom: 16,
+    marginTop: 16,
   },
-  suggestedChip: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 15,
+  suggestionsContent: {
+    paddingHorizontal: 20,
+    gap: 8,
+  },
+  suggestionChip: {
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: 'rgba(99, 102, 241, 0.2)',
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 7,
+  },
+  suggestionText: {
+    color: '#a5b4fc',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  // Input
+  inputArea: {
+    width: '100%',
+    paddingHorizontal: 20,
+    marginTop: 16,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  textInput: {
+    flex: 1,
+    height: 42,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    color: '#e2e8f0',
+    paddingHorizontal: 16,
+    fontSize: 14,
+  },
+  sendBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#6366f1',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  suggestedChipTxt: {
+  sendBtnDisabled: {
+    opacity: 0.4,
+  },
+  closeKeyboardBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  keyboardToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    gap: 6,
+  },
+  keyboardToggleText: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  // Action Card
+  actionCard: {
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+  },
+  actionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  actionCardTitle: {
+    color: '#10B981',
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+  },
+  actionActivityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  actionActivityText: {
+    color: '#10B981',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  actionCardRoute: {
+    marginBottom: 14,
+  },
+  routePoint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  routeDotGreen: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10B981',
+  },
+  routeDotRed: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#EF4444',
+  },
+  routeLine: {
+    width: 2,
+    height: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginLeft: 4,
+    marginVertical: 2,
+  },
+  routeText: {
+    color: '#e2e8f0',
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+  actionCardButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  confirmBtn: {
+    flex: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#10B981',
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  confirmBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  dismissBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  dismissBtnText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  // Trip Config Card styles
+  configSection: {
+    marginBottom: 12,
+  },
+  configLabel: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  configRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  configChip: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+  },
+  configChipActive: {
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    borderColor: '#6366f1',
+  },
+  configChipText: {
     color: '#94a3b8',
     fontSize: 12,
     fontWeight: '600',
   },
-  keyboardToggleBar: {
-    width: '100%',
-    paddingHorizontal: 20,
-    alignItems: 'center',
+  configChipTextActive: {
+    color: '#a5b4fc',
   },
-  keyboardPillBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
+  configChipDesc: {
+    color: '#475569',
+    fontSize: 9,
+    fontWeight: '500',
+    marginTop: 2,
   },
-  keyboardPillTxt: {
-    color: '#94a3b8',
-    fontSize: 11,
-    fontWeight: '700',
+  configChipDescActive: {
+    color: '#818cf8',
   },
-  keyboardInputRow: {
-    flexDirection: 'row',
-    width: '100%',
-    alignItems: 'center',
-    gap: 8,
-  },
-  keyboardTextInput: {
+  activityChip: {
     flex: 1,
-    height: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    color: '#ffffff',
-    paddingHorizontal: 16,
-    fontSize: 13,
-  },
-  keyboardSendBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#10B981',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  activityChipActive: {
+    backgroundColor: '#6366f1',
+    borderColor: '#6366f1',
+  },
+  activityChipText: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  activityChipTextActive: {
+    color: '#ffffff',
   },
 });

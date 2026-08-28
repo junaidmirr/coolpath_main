@@ -27,7 +27,7 @@ try {
 } catch (e) {
   SpeechModule = null;
 }
-import { planMission, checkBackendHealth, parseUserIntent, setCustomBackendUrl, getCustomBackendUrl, type BackendStatus } from './src/services/api';
+import { planMission, checkBackendHealth, parseUserIntent, setCustomBackendUrl, getCustomBackendUrl, fetchSmartSearchSuggestions, type BackendStatus } from './src/services/api';
 import {
   loadRouteHistory, saveRouteHistory, clearRouteHistory, type HistoryItem,
 } from './src/services/history';
@@ -152,6 +152,7 @@ const CITIES = [
 
 import { fetchPollyTTSAudio } from './src/services/voiceAssistant';
 import { submitRouteFeedback, fetchMLStats } from './src/services/api';
+import { CoolPathAssistantModal } from './src/components/CoolPathAssistantModal';
 
 const DEADLINE_OPTIONS = [15, 30, 45, 60, 90];
 
@@ -186,6 +187,10 @@ export interface PlaceSuggestion {
   shortName: string;
   lat: number;
   lng: number;
+  distanceKm?: number;
+  ring?: string;
+  badgeLabel?: string;
+  reasoning?: string;
 }
 
 function parseCoordinateString(q: string): Coordinate | null {
@@ -202,12 +207,37 @@ function parseCoordinateString(q: string): Coordinate | null {
   return null;
 }
 
-async function fetchPlaceSuggestions(query: string): Promise<PlaceSuggestion[]> {
+async function fetchPlaceSuggestions(query: string, userOrigin?: Coordinate): Promise<PlaceSuggestion[]> {
   if (!query || query.trim().length < 2) return [];
   // Skip place autocomplete if the user is typing direct coordinates
   if (parseCoordinateString(query)) return [];
+
+  // 1. Try backend Intelligent Exponential Ring Search + Gemini AI evaluation first
+  if (userOrigin) {
+    try {
+      const smartResults = await fetchSmartSearchSuggestions(query, userOrigin.lat, userOrigin.lng);
+      if (smartResults && smartResults.length > 0) {
+        return smartResults.map(item => ({
+          id: item.id,
+          placeName: item.place_name,
+          shortName: item.short_name,
+          lat: item.lat,
+          lng: item.lng,
+          distanceKm: item.distance_km,
+          ring: item.ring,
+          badgeLabel: item.badge_label,
+          reasoning: item.reasoning
+        }));
+      }
+    } catch {
+      // Fallback to Mapbox Geocoding if backend smart-search is unreachable
+    }
+  }
+
+  // 2. Fallback to Mapbox Proximity Geocoding API
   try {
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query.trim())}.json?access_token=${MAPBOX_ACCESS_TOKEN}&autocomplete=true&limit=5`;
+    const prox = userOrigin ? `&proximity=${userOrigin.lng},${userOrigin.lat}` : '';
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query.trim())}.json?access_token=${MAPBOX_ACCESS_TOKEN}&autocomplete=true&limit=5${prox}`;
     const res = await fetch(url);
     const data = await res.json();
     if (data.features && Array.isArray(data.features)) {
@@ -414,6 +444,7 @@ export default function App() {
   // ML Preference Model & Insights State (Piece 1, 2, 3)
   const [shadePreferencePct, setShadePreferencePct] = useState<number>(65.0);
   const [showMLInsightsModal, setShowMLInsightsModal] = useState<boolean>(false);
+  const [showAssistantModal, setShowAssistantModal] = useState<boolean>(false);
   const [mlHistory, setMlHistory] = useState<any[]>([]);
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
   const [submittedFeedbackRoutes, setSubmittedFeedbackRoutes] = useState<Record<string, 'good' | 'bad'>>({});
@@ -451,6 +482,7 @@ export default function App() {
   const [journeyDuration, setJourneyDuration] = useState(0);
   const [mapStyleOption, setMapStyleOption] = useState<'theme' | 'satellite' | 'outdoors'>('theme');
   const [showMapLayersMenu, setShowMapLayersMenu] = useState(false);
+  const [showRouteSelectionMenu, setShowRouteSelectionMenu] = useState(false);
   const [showNavSetupModal, setShowNavSetupModal] = useState(false);
 
   // Animated Splash Screen States & Timers
@@ -1293,11 +1325,11 @@ export default function App() {
       return;
     }
     const timer = setTimeout(async () => {
-      const results = await fetchPlaceSuggestions(originText);
+      const results = await fetchPlaceSuggestions(originText, origin);
       setOriginSuggestions(results);
     }, 220);
     return () => clearTimeout(timer);
-  }, [originText, activeSearchTarget]);
+  }, [originText, activeSearchTarget, origin]);
 
   // Debounced Real-time Search for Destination
   useEffect(() => {
@@ -1306,11 +1338,11 @@ export default function App() {
       return;
     }
     const timer = setTimeout(async () => {
-      const results = await fetchPlaceSuggestions(destText);
+      const results = await fetchPlaceSuggestions(destText, origin);
       setDestSuggestions(results);
     }, 220);
     return () => clearTimeout(timer);
-  }, [destText, activeSearchTarget]);
+  }, [destText, activeSearchTarget, origin]);
 
   // Live Weather & AQI State for selected origin location
   const [liveWeather, setLiveWeather] = useState<LiveWeatherAqi>({ tempC: null, aqi: null, humidity: null, windSpeedKmh: null });
@@ -1578,11 +1610,33 @@ export default function App() {
       };
 
       const res = await planMission(req);
+
+      if (!res.route_options?.length && (!res.routes?.fastest?.length || res.routes.fastest.length < 2)) {
+        setError('Could not find routes to the desired destination. Please verify the locations and try again.');
+        return;
+      }
+
       setResponse(res);
 
       if (res.route_options?.length) {
         const rec = res.route_options.find(r => r.is_recommended) || res.route_options[0];
         setSelectedRoute(rec.id);
+
+        const isInsideUSA = (lat: number, lng: number) =>
+          lat >= 24.396308 && lat <= 49.384358 && lng >= -125.0 && lng <= -66.93457;
+        const destInUSA = isInsideUSA(d.lat, d.lng);
+        const originInUSA = isInsideUSA(o.lat, o.lng);
+
+        if (!destInUSA || !originInUSA) {
+          const hasThermalData = res.route_options.some(r => r.thermal_reduction_percent > 0 || r.avg_temp_c !== 36.0);
+          if (!hasThermalData && res.thermal_reduction_percent === 0) {
+            Alert.alert(
+              'CoolPath Cool Route Unavailable',
+              'Heat-optimized CoolPath routing is currently available only within the United States. Showing standard fastest route for this location.\n\nWould you like to proceed with normal route planning?',
+              [{ text: 'Yes, Use Standard Route', style: 'default' }]
+            );
+          }
+        }
       }
 
       // Save to local AsyncStorage history
@@ -1720,10 +1774,29 @@ export default function App() {
         pace,
       };
       const res = await planMission(req);
+
+      if (!res.route_options?.length && (!res.routes?.fastest?.length || res.routes.fastest.length < 2)) {
+        setError('Could not find routes to the desired destination. Please verify the locations and try again.');
+        return;
+      }
+
       setResponse(res);
       if (res.route_options?.length) {
         const rec = res.route_options.find((r) => r.is_recommended) || res.route_options[0];
         setSelectedRoute(rec.id);
+
+        const isInsideUSA = (lat: number, lng: number) =>
+          lat >= 24.396308 && lat <= 49.384358 && lng >= -125.0 && lng <= -66.93457;
+        if (!isInsideUSA(d.lat, d.lng) || !isInsideUSA(o.lat, o.lng)) {
+          const hasThermalData = res.route_options.some((r) => r.thermal_reduction_percent > 0 || r.avg_temp_c !== 36.0);
+          if (!hasThermalData && res.thermal_reduction_percent === 0) {
+            Alert.alert(
+              'CoolPath Cool Route Unavailable',
+              'Heat-optimized CoolPath routing is currently available only within the United States. Showing standard fastest route for this location.',
+              [{ text: 'Yes, Use Standard Route', style: 'default' }]
+            );
+          }
+        }
       }
       snapSheetTo(SHEET_PEEK);
     } catch (e: any) {
@@ -1819,6 +1892,133 @@ export default function App() {
             onMapCanvasTap={() => setUiVisible((v) => !v)}
             userHeading={userHeading}
           />
+
+          {/* 🗺️ FLOATING ROUTE SELECTION FAB (Shown above Map Layer FAB when routes are calculated) */}
+          {uiVisible && !isNavigating && response && (response.route_options?.length ?? 0) > 0 && (
+            <View style={{
+              position: 'absolute',
+              bottom: SHEET_MIN + 24 + 58 + 58,
+              left: 16,
+              zIndex: 40,
+            }}>
+              {/* Route Selection FAB Button - Fixed Coordinate */}
+              <TouchableOpacity
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 24,
+                  backgroundColor: theme.topCardBg,
+                  borderColor: '#38bdf8',
+                  borderWidth: 1.5,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  shadowColor: '#38bdf8',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 6,
+                }}
+                onPress={() => setShowRouteSelectionMenu(prev => !prev)}
+                activeOpacity={0.8}
+              >
+                <Ionicons 
+                  name={
+                    selectedRoute === 'fastest' ? 'flash' :
+                    selectedRoute === 'coolest' ? 'snow' :
+                    selectedRoute === 'balanced' ? 'scale' : 'navigate'
+                  } 
+                  size={20} 
+                  color={
+                    selectedRoute === 'fastest' ? theme.accentFast :
+                    selectedRoute === 'coolest' ? theme.accentCool :
+                    selectedRoute === 'balanced' ? theme.accentBalanced : '#38bdf8'
+                  } 
+                />
+              </TouchableOpacity>
+
+              {/* Expanded Route Options Menu - Positioned Absolutely Next to FAB */}
+              {showRouteSelectionMenu && (
+                <View style={{
+                  position: 'absolute',
+                  left: 56,
+                  bottom: 0,
+                  backgroundColor: theme.topCardBg,
+                  borderRadius: 20,
+                  padding: 6,
+                  borderColor: theme.border,
+                  borderWidth: 1.5,
+                  gap: 6,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.25,
+                  shadowRadius: 10,
+                  elevation: 8,
+                  minWidth: 220,
+                  maxWidth: 260,
+                }}>
+                  {response.route_options!.map((route) => {
+                    const sel = route.id === selectedRoute;
+                    let iconName: any = 'navigate';
+                    let iconColor = '#38bdf8';
+                    if (route.id === 'fastest') {
+                      iconName = 'flash';
+                      iconColor = theme.accentFast;
+                    } else if (route.id === 'coolest') {
+                      iconName = 'snow';
+                      iconColor = theme.accentCool;
+                    } else if (route.id === 'balanced') {
+                      iconName = 'scale';
+                      iconColor = theme.accentBalanced;
+                    }
+
+                    return (
+                      <TouchableOpacity
+                        key={route.id}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                          borderRadius: 14,
+                          backgroundColor: sel ? (theme.isDark ? 'rgba(56, 189, 248, 0.15)' : 'rgba(56, 189, 248, 0.1)') : 'transparent',
+                          gap: 10,
+                        }}
+                        onPress={() => {
+                          setSelectedRoute(route.id);
+                          setShowRouteSelectionMenu(false);
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 16,
+                          backgroundColor: sel ? iconColor : theme.inputBg,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <Ionicons 
+                            name={iconName} 
+                            size={16} 
+                            color={sel ? '#ffffff' : iconColor} 
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '800', color: theme.textPrimary }} numberOfLines={1}>
+                            {route.name}
+                          </Text>
+                          <Text style={{ fontSize: 10, color: theme.textMuted, marginTop: 1 }}>
+                            {route.travel_minutes} min • ~{formatTemp(route.avg_temp_c)}
+                          </Text>
+                        </View>
+                        {sel && <Ionicons name="checkmark-circle" size={16} color={theme.accentCool} />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          )}
 
           {/* 🗺️ Floating Map Layer Selector FAB Stack */}
           {uiVisible && !isNavigating && (
@@ -2222,6 +2422,17 @@ export default function App() {
                 </View>
               )}
 
+              {/* Error Banner */}
+              {error && (
+                <View style={[styles.statusToastCard, { backgroundColor: theme.topCardBg, borderColor: '#EF4444' }]}>
+                  <Ionicons name="warning-outline" size={15} color="#EF4444" style={{ marginRight: 6 }} />
+                  <Text style={[styles.statusToastTxt, { color: '#EF4444', flex: 1 }]}>{error}</Text>
+                  <TouchableOpacity onPress={() => setError(null)} style={{ padding: 4 }}>
+                    <Ionicons name="close" size={14} color={theme.textMuted} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {/* Location Input Card */}
               <View style={[styles.locCard, { backgroundColor: theme.topCardBg, borderColor: theme.border }]}>
                 {/* Destination row is always shown first */}
@@ -2265,6 +2476,13 @@ export default function App() {
                     onPress={() => setPinMode((p) => (p === 'destination' ? null : 'destination'))}
                   >
                     <Ionicons name="locate" size={15} color={pinMode === 'destination' ? '#EF4444' : theme.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.aiVoiceInlineBtn]}
+                    onPress={() => setShowAssistantModal(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="sparkles" size={15} color="#fff" />
                   </TouchableOpacity>
                 </View>
 
@@ -2387,7 +2605,18 @@ export default function App() {
                       >
                         <Ionicons name="location-sharp" size={16} color="#10B981" style={{ marginRight: 10 }} />
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.suggestionName, { color: theme.textPrimary }]} numberOfLines={1}>{item.shortName}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                            <Text style={[styles.suggestionName, { color: theme.textPrimary, flex: 1 }]} numberOfLines={1}>
+                              {item.shortName}
+                            </Text>
+                            {item.badgeLabel && (
+                              <View style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 6 }}>
+                                <Text style={{ fontSize: 9, fontWeight: '800', color: '#10b981' }}>
+                                  {item.badgeLabel}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
                           <Text style={[styles.suggestionSub, { color: theme.textMuted }]} numberOfLines={1}>{item.placeName}</Text>
                         </View>
                       </TouchableOpacity>
@@ -2413,7 +2642,18 @@ export default function App() {
                       >
                         <Ionicons name="location-sharp" size={16} color="#EF4444" style={{ marginRight: 10 }} />
                         <View style={{ flex: 1 }}>
-                          <Text style={[styles.suggestionName, { color: theme.textPrimary }]} numberOfLines={1}>{item.shortName}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                            <Text style={[styles.suggestionName, { color: theme.textPrimary, flex: 1 }]} numberOfLines={1}>
+                              {item.shortName}
+                            </Text>
+                            {item.badgeLabel && (
+                              <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 6 }}>
+                                <Text style={{ fontSize: 9, fontWeight: '800', color: '#ef4444' }}>
+                                  {item.badgeLabel}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
                           <Text style={[styles.suggestionSub, { color: theme.textMuted }]} numberOfLines={1}>{item.placeName}</Text>
                         </View>
                       </TouchableOpacity>
@@ -2435,6 +2675,37 @@ export default function App() {
                 </TouchableOpacity>
               )}
             </>
+          )}
+
+          {/* 🚀 FLOATING START NAVIGATION PILL BUTTON (Same size as Show Metrics button, placed directly above it) */}
+          {uiVisible && response && !isNavigating && !isSheetExpanded && (
+            <TouchableOpacity
+              style={{
+                position: 'absolute',
+                bottom: isSheetHidden ? 132 : SHEET_MIN + 12,
+                alignSelf: 'center',
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: Math.min(SW * 0.055, 22),
+                paddingVertical: 12,
+                borderRadius: 24,
+                backgroundColor: '#10b981',
+                shadowColor: '#10b981',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.35,
+                shadowRadius: 8,
+                elevation: 8,
+                zIndex: 38,
+                minHeight: 46,
+              }}
+              onPress={() => setShowNavSetupModal(true)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="navigate-circle" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+              <Text style={{ fontSize: Math.min(SW * 0.035, 14), fontWeight: '800', color: '#ffffff', letterSpacing: 0.5, lineHeight: 18 }}>
+                Start Navigation
+              </Text>
+            </TouchableOpacity>
           )}
 
           {/* ── 📱 REDESIGNED ROUTE RESULTS BOTTOM SHEET (Only shown after route generated) ── */}
@@ -2486,25 +2757,301 @@ export default function App() {
                   keyboardShouldPersistTaps="handled"
                   showsVerticalScrollIndicator={false}
                 >
-                {/* Thermal Exposure Summary */}
+                {/* 🛡️ SOLID & PROFESSIONAL THERMAL STRAIN REDUCTION CARD */}
                 {activeRoute && (
-                  <View style={[styles.exposureCard, { backgroundColor: theme.isDark ? 'rgba(16,185,129,0.08)' : 'rgba(16,185,129,0.12)' }]}>
-                    <View>
-                      <Text style={styles.exposureVal}>
-                        {activeRoute.thermal_reduction_percent > 0
-                          ? `-${activeRoute.thermal_reduction_percent}%`
-                          : 'OPTIMAL'}
-                      </Text>
-                      <Text style={[styles.exposureLbl, { color: theme.textMuted }]}>THERMAL STRAIN REDUCTION</Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end', gap: 5 }}>
-                      <View style={styles.metaRow}>
-                        <Feather name="clock" size={12} color={theme.textMuted} style={{ marginRight: 4 }} />
-                        <Text style={[styles.metaTxt, { color: theme.textPrimary }]}>{activeRoute.travel_minutes} min</Text>
+                  <LinearGradient
+                    colors={theme.isDark ? ['#064e3b', '#022c22'] : ['#d1fae5', '#a7f3d0']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={{
+                      marginBottom: 16,
+                      borderRadius: 18,
+                      padding: 16,
+                      borderWidth: 1.5,
+                      borderColor: '#10b981',
+                      shadowColor: '#10b981',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.25,
+                      shadowRadius: 8,
+                      elevation: 6,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <View style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 16,
+                          backgroundColor: 'rgba(16, 185, 129, 0.25)',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <Ionicons name="shield-checkmark" size={18} color={theme.isDark ? '#34d399' : '#047857'} />
+                        </View>
+                        <View>
+                          <Text style={{ fontSize: 10, fontWeight: '800', color: theme.isDark ? '#a7f3d0' : '#065f46', letterSpacing: 0.6, textTransform: 'uppercase' }}>
+                            PHYSICS-ML THERMAL PROTECTION
+                          </Text>
+                          <Text style={{ fontSize: 13, fontWeight: '800', color: theme.isDark ? '#ffffff' : '#064e3b' }}>
+                            Optimal Microclimate Route
+                          </Text>
+                        </View>
                       </View>
-                      <View style={styles.metaRow}>
-                    <Ionicons name="shield-checkmark-outline" size={12} color="#818cf8" style={{ marginRight: 4 }} />
-                        <Text style={[styles.metaTxt, { color: theme.textPrimary }]}>Exposure: {activeRoute.thermal_exposure ?? '--'} J/s</Text>
+                      <View style={{
+                        backgroundColor: theme.isDark ? '#10b981' : '#047857',
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                        borderRadius: 20,
+                      }}>
+                        <Text style={{ fontSize: 10, fontWeight: '900', color: '#ffffff', letterSpacing: 0.4 }}>
+                          VERIFIED SHADE
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Main Stats Row */}
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: theme.isDark ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.65)',
+                      borderRadius: 14,
+                      padding: 12,
+                      borderWidth: 1,
+                      borderColor: theme.isDark ? 'rgba(52, 211, 153, 0.2)' : 'rgba(4, 120, 87, 0.2)',
+                    }}>
+                      {/* Stat 1: Savings */}
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: theme.isDark ? '#9ca3af' : '#4b5563', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                          HEAT STRAIN SAVINGS
+                        </Text>
+                        <Text style={{ fontSize: 22, fontWeight: '900', color: theme.isDark ? '#34d399' : '#047857', marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          {activeRoute.thermal_reduction_percent > 0 ? `-${activeRoute.thermal_reduction_percent}%` : 'OPTIMAL'}
+                        </Text>
+                      </View>
+
+                      <View style={{ width: 1, height: 32, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)', marginHorizontal: 10 }} />
+
+                      {/* Stat 2: Exposure Load */}
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: theme.isDark ? '#9ca3af' : '#4b5563', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                          EXPOSURE LOAD
+                        </Text>
+                        <Text style={{ fontSize: 15, fontWeight: '900', color: theme.isDark ? '#ffffff' : '#111827', marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          {activeRoute.thermal_exposure ?? '--'} J/s
+                        </Text>
+                      </View>
+
+                      <View style={{ width: 1, height: 32, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)', marginHorizontal: 10 }} />
+
+                      {/* Stat 3: Est Duration */}
+                      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: theme.isDark ? '#9ca3af' : '#4b5563', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                          DURATION
+                        </Text>
+                        <Text style={{ fontSize: 15, fontWeight: '900', color: theme.isDark ? '#ffffff' : '#111827', marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          {activeRoute.travel_minutes} min
+                        </Text>
+                      </View>
+                    </View>
+                  </LinearGradient>
+                )}
+
+                {/* ── 🗺️ SELECTED ROUTE METRICS CARD ── */}
+                {activeRoute && (
+                  <View style={{
+                    marginBottom: 14,
+                    padding: Math.min(SW * 0.04, 16),
+                    borderRadius: 18,
+                    backgroundColor: theme.surfaceRaised,
+                    borderWidth: 1.5,
+                    borderColor: theme.accentCool,
+                    shadowColor: theme.accentCool,
+                    shadowOpacity: 0.15,
+                    shadowRadius: 8,
+                    elevation: 5,
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                          <Ionicons 
+                            name={
+                              activeRoute.id === 'fastest' ? 'flash' :
+                              activeRoute.id === 'coolest' ? 'snow' :
+                              activeRoute.id === 'balanced' ? 'scale' : 'navigate'
+                            } 
+                            size={15} 
+                            color={
+                              activeRoute.id === 'fastest' ? theme.accentFast :
+                              activeRoute.id === 'coolest' ? theme.accentCool :
+                              activeRoute.id === 'balanced' ? theme.accentBalanced : '#38bdf8'
+                            } 
+                          />
+                          <Text style={{ fontSize: 10, fontWeight: '800', color: theme.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            ACTIVE SELECTED ROUTE
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 16, fontWeight: '900', color: theme.textPrimary }} numberOfLines={1}>
+                          {activeRoute.name}
+                        </Text>
+                      </View>
+
+                      {activeRoute.is_recommended && (
+                        <View style={{ backgroundColor: 'rgba(224, 184, 74, 0.16)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: theme.accentGold }}>
+                          <Text style={{ fontSize: 10, fontWeight: '900', color: theme.accentGold }}>⭐ BEST CHOICE</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Stats Readout Grid */}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: theme.inputBg, padding: 10, borderRadius: 12, marginBottom: 10 }}>
+                      <View>
+                        <Text style={{ fontSize: 9, color: theme.textMuted, fontWeight: '700' }}>EST. DURATION</Text>
+                        <Text style={{ fontSize: 15, fontWeight: '900', color: theme.textPrimary, marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          {activeRoute.travel_minutes} min
+                        </Text>
+                      </View>
+                      <View>
+                        <Text style={{ fontSize: 9, color: theme.textMuted, fontWeight: '700' }}>AVG TEMP</Text>
+                        <Text style={{ fontSize: 15, fontWeight: '900', color: theme.textPrimary, marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          ~{formatTemp(activeRoute.avg_temp_c)}
+                        </Text>
+                      </View>
+                      <View>
+                        <Text style={{ fontSize: 9, color: theme.textMuted, fontWeight: '700' }}>HEAT LOAD</Text>
+                        <Text style={{ fontSize: 15, fontWeight: '900', color: theme.textPrimary, marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          {activeRoute.thermal_exposure ?? '--'} J/s
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Feedback Buttons for Selected Route */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8, borderTopWidth: 0.5, borderTopColor: theme.border }}>
+                      <Text style={{ fontSize: 11, color: theme.textMuted, fontWeight: '600' }}>Rate route choice:</Text>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {submittedFeedbackRoutes[activeRoute.id] ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: 6 }}>
+                            <Ionicons name="checkmark-circle" size={12} color={theme.accentCool} style={{ marginRight: 4 }} />
+                            <Text style={{ fontSize: 10, fontWeight: '800', color: theme.accentCool }}>Feedback Saved</Text>
+                          </View>
+                        ) : (
+                          <>
+                            <TouchableOpacity
+                              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(45, 217, 184, 0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(45, 217, 184, 0.3)', gap: 3 }}
+                              onPress={() => handleFeedback(activeRoute.id, true)}
+                              activeOpacity={0.7}
+                            >
+                              <Ionicons name="thumbs-up-outline" size={11} color={theme.accentCool} />
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: theme.accentCool }}>Like</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(232, 137, 94, 0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(232, 137, 94, 0.3)', gap: 3 }}
+                              onPress={() => handleFeedback(activeRoute.id, false)}
+                              activeOpacity={0.7}
+                            >
+                              <Ionicons name="thumbs-down-outline" size={11} color={theme.accentHeat} />
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: theme.accentHeat }}>Pass</Text>
+                            </TouchableOpacity>
+                          </>
+                        )}
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {/* ⏰ REDESIGNED OPTIMAL DEPARTURE TIMING CARD (4 Separated Metric Boxes) */}
+                {response && (
+                  <View style={{ marginBottom: 14 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="time" size={15} color="#fbbf24" />
+                        <Text style={[styles.secLabel, { color: theme.textMuted, marginBottom: 0 }]}>
+                          OPTIMAL DEPARTURE WINDOW
+                        </Text>
+                      </View>
+                      <View style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                        <Text style={{ fontSize: 9, fontWeight: '800', color: '#fbbf24' }}>
+                          {response.planning_mode === 'scheduled' ? 'SCHEDULED' : 'INSTANT DEPARTURE'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* 4 Separated Metric Boxes Grid */}
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                      {/* Box 1: Optimal Departure Time */}
+                      <View style={{
+                        flex: 1,
+                        minWidth: '46%',
+                        backgroundColor: theme.inputBg,
+                        padding: 10,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: 'rgba(251, 191, 36, 0.3)',
+                      }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+                          <Ionicons name="alarm-outline" size={13} color="#fbbf24" />
+                          <Text style={{ fontSize: 9, fontWeight: '800', color: theme.textMuted, letterSpacing: 0.3 }}>BEST DEPARTURE</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '900', color: theme.textPrimary, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          {response.optimal_departure_time || 'Depart Now'}
+                        </Text>
+                      </View>
+
+                      {/* Box 2: Wait Offset Time */}
+                      <View style={{
+                        flex: 1,
+                        minWidth: '46%',
+                        backgroundColor: theme.inputBg,
+                        padding: 10,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: 'rgba(56, 189, 248, 0.3)',
+                      }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+                          <Ionicons name="hourglass-outline" size={13} color="#38bdf8" />
+                          <Text style={{ fontSize: 9, fontWeight: '800', color: theme.textMuted, letterSpacing: 0.3 }}>RECOMMENDED WAIT</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '900', color: theme.textPrimary, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          {response.wait_minutes > 0 ? `+${response.wait_minutes} min` : '0 min (Immediate)'}
+                        </Text>
+                      </View>
+
+                      {/* Box 3: Thermal Load Savings */}
+                      <View style={{
+                        flex: 1,
+                        minWidth: '46%',
+                        backgroundColor: theme.inputBg,
+                        padding: 10,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: 'rgba(16, 185, 129, 0.3)',
+                      }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+                          <Ionicons name="trending-down" size={13} color="#10b981" />
+                          <Text style={{ fontSize: 9, fontWeight: '800', color: theme.textMuted, letterSpacing: 0.3 }}>THERMAL SAVINGS</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '900', color: '#10b981', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                          {response.thermal_reduction_percent > 0 ? `-${response.thermal_reduction_percent}% Heat` : 'Optimal'}
+                        </Text>
+                      </View>
+
+                      {/* Box 4: Recommended Speed/Pace */}
+                      <View style={{
+                        flex: 1,
+                        minWidth: '46%',
+                        backgroundColor: theme.inputBg,
+                        padding: 10,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: 'rgba(167, 139, 250, 0.3)',
+                      }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+                          <Ionicons name="speedometer-outline" size={13} color="#a78bfa" />
+                          <Text style={{ fontSize: 9, fontWeight: '800', color: theme.textMuted, letterSpacing: 0.3 }}>TARGET PACE</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '900', color: theme.textPrimary, textTransform: 'capitalize' }}>
+                          {response.recommended_action?.pace || pace || 'Normal'}
+                        </Text>
                       </View>
                     </View>
                   </View>
@@ -2614,253 +3161,6 @@ export default function App() {
                   </View>
                 )}
 
-                {/* Scheduled Departure Timing Card */}
-                {response.planning_mode === 'scheduled' && response.wait_minutes > 0 && (
-                  <View style={styles.timingCard}>
-                    <Feather name="clock" size={15} color="#fde68a" />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.timingHead}>Depart {response.optimal_departure_time}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 }}>
-                        <Text style={styles.timingSub}>
-                          +{response.wait_minutes} min wait
-                        </Text>
-                        <Ionicons name="arrow-forward" size={11} color="#fbbf24" />
-                        <Text style={styles.timingSub}>
-                          saves {response.thermal_reduction_percent}% heat
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                )}
-
-                {/* Alternative Route Option Cards */}
-                {(response.route_options?.length ?? 0) > 0 && (
-                  <View style={{ marginBottom: 10 }}>
-                    <Text style={[styles.secLabel, { color: theme.textMuted }]}>CANDIDATE MICROCLIMATE PATHS (PARETO TRADEOFFS)</Text>
-                    {(() => {
-                      const rOpts = response.route_options || [];
-                      const minTime = Math.min(...rOpts.map(r => r.travel_minutes || 99999));
-                      const minExposure = Math.min(...rOpts.map(r => r.thermal_exposure || 99999));
-
-                      return rOpts.map((route) => {
-                        const sel = route.id === selectedRoute;
-                        let color = theme.accentCool;
-                        if (route.id === 'fastest') color = theme.accentFast;
-                        else if (route.id === 'coolest') color = theme.accentCool;
-                        else if (route.id === 'balanced') color = theme.accentBalanced;
-
-                        let tradeoffLabel = route.tag || 'Alternative Route';
-                        let tradeoffColor = theme.textMuted;
-                        let tradeoffIcon: any = 'git-branch-outline';
-                        if (route.travel_minutes === minTime && route.thermal_exposure === minExposure) {
-                          tradeoffLabel = 'Pareto Optimal (Best Overall)';
-                          tradeoffColor = theme.accentCool;
-                          tradeoffIcon = 'trophy-outline';
-                        } else if (route.travel_minutes === minTime) {
-                          tradeoffLabel = 'Fastest Route (Higher Heat Exposure)';
-                          tradeoffColor = theme.accentFast;
-                          tradeoffIcon = 'flash-outline';
-                        } else if (route.thermal_exposure === minExposure) {
-                          tradeoffLabel = 'Coolest Route (Slower Travel)';
-                          tradeoffColor = theme.accentCool;
-                          tradeoffIcon = 'snow-outline';
-                        } else {
-                          tradeoffLabel = 'Balanced Compromise';
-                          tradeoffColor = theme.accentBalanced;
-                          tradeoffIcon = 'scale-outline';
-                        }
-
-                        const isRec = route.is_recommended;
-                        const monoFont = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
-
-                        return (
-                          <TouchableOpacity
-                            key={route.id}
-                            style={[
-                              styles.routeCard,
-                              {
-                                backgroundColor: theme.surfaceRaised,
-                                borderColor: isRec ? theme.accentGold : theme.border,
-                                borderWidth: isRec ? 1.5 : 1,
-                                shadowColor: isRec ? theme.accentGold : '#000',
-                                shadowOpacity: isRec ? 0.25 : 0.15,
-                                shadowRadius: isRec ? 12 : 6,
-                              },
-                              sel && { borderColor: theme.accentCool, borderWidth: 1.5 },
-                            ]}
-                            onPress={() => setSelectedRoute(route.id)}
-                            activeOpacity={0.8}
-                          >
-                            <View style={[styles.routeStripe, { backgroundColor: color }]} />
-                            <View style={{ flex: 1 }}>
-                              <View style={styles.routeTop}>
-                                <View style={{ flex: 1, paddingRight: 8 }}>
-                                  <Text style={[styles.routeName, { color: theme.textPrimary }]} numberOfLines={1}>
-                                    {route.name}
-                                  </Text>
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 6 }}>
-                                    <Ionicons name={tradeoffIcon} size={11} color={tradeoffColor} />
-                                    <Text
-                                      style={{
-                                        fontSize: Math.min(SW * 0.026, 10),
-                                        fontWeight: '700',
-                                        color: tradeoffColor,
-                                        textTransform: 'uppercase',
-                                        letterSpacing: 0.5,
-                                        lineHeight: 14,
-                                      }}
-                                      numberOfLines={2}
-                                    >
-                                      {tradeoffLabel}
-                                    </Text>
-                                  </View>
-                                </View>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                  {isRec && (
-                                    <View style={[styles.recBadge, { backgroundColor: 'rgba(224, 184, 74, 0.16)', borderColor: theme.accentGold }]}>
-                                      <Ionicons name="star" size={11} color={theme.accentGold} />
-                                      <Text style={[styles.recTxt, { color: theme.accentGold, fontFamily: monoFont }]}> BEST</Text>
-                                    </View>
-                                  )}
-                                  {sel && <Ionicons name="checkmark-circle" size={18} color={theme.accentCool} />}
-                                </View>
-                              </View>
-
-                              {/* Tabular Monospace Numeric Readouts */}
-                              <View style={styles.routeBot}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                  <Ionicons name="time-outline" size={12} color={theme.textSecondary} />
-                                  <Text style={[styles.routeMeta, { color: theme.textSecondary, fontFamily: monoFont }]}>
-                                    {route.travel_minutes} min
-                                  </Text>
-                                </View>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                  <Ionicons name="thermometer-outline" size={12} color={theme.textSecondary} />
-                                  <Text style={[styles.routeMeta, { color: theme.textSecondary, fontFamily: monoFont }]}>
-                                    ~{formatTemp(route.avg_temp_c)}
-                                  </Text>
-                                </View>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                  <Ionicons name="shield-checkmark-outline" size={12} color={theme.textSecondary} />
-                                  <Text style={[styles.routeMeta, { color: theme.textSecondary, fontFamily: monoFont }]}>
-                                    {route.thermal_exposure ?? '--'} J/s
-                                  </Text>
-                                </View>
-                                {route.thermal_reduction_percent > 0 && (
-                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                    <Ionicons name="trending-down" size={12} color={theme.accentCool} />
-                                    <Text style={[styles.routeCool, { color: theme.accentCool, fontFamily: monoFont }]}>
-                                      -{route.thermal_reduction_percent}%
-                                    </Text>
-                                  </View>
-                                )}
-                              </View>
-
-                              {/* Interactive ML Feedback Buttons (or tick confirmation once logged) */}
-                              <View
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'center',
-                                  justifyContent: 'flex-end',
-                                  marginTop: 8,
-                                  paddingTop: 8,
-                                  borderTopWidth: 0.5,
-                                  borderTopColor: theme.border,
-                                  gap: 6,
-                                }}
-                              >
-                                {submittedFeedbackRoutes[route.id] ? (
-                                  <View
-                                    style={{
-                                      flexDirection: 'row',
-                                      alignItems: 'center',
-                                      paddingHorizontal: 8,
-                                      paddingVertical: 4,
-                                      backgroundColor: 'rgba(16, 185, 129, 0.08)',
-                                      borderRadius: 8,
-                                    }}
-                                  >
-                                    <Ionicons name="checkmark-circle" size={12} color={theme.accentCool} style={{ marginRight: 4 }} />
-                                    <Text
-                                      style={{
-                                        fontSize: 9,
-                                        fontWeight: '700',
-                                        color: theme.accentCool,
-                                        letterSpacing: 0.3,
-                                        textTransform: 'uppercase',
-                                      }}
-                                    >
-                                      Logged
-                                    </Text>
-                                  </View>
-                                ) : (
-                                  <>
-                                    <TouchableOpacity
-                                      style={{
-                                        flexDirection: 'row',
-                                        alignItems: 'center',
-                                        backgroundColor: 'rgba(45, 217, 184, 0.08)',
-                                        paddingHorizontal: 8,
-                                        paddingVertical: 5,
-                                        borderRadius: 8,
-                                        borderWidth: 0.5,
-                                        borderColor: 'rgba(45, 217, 184, 0.3)',
-                                        gap: 3,
-                                      }}
-                                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                      onPress={() => handleFeedback(route.id, true)}
-                                      activeOpacity={0.7}
-                                    >
-                                      <Ionicons name="thumbs-up-outline" size={11} color={theme.accentCool} />
-                                      <Text
-                                        style={{
-                                          fontSize: 9,
-                                          fontWeight: '700',
-                                          color: theme.accentCool,
-                                        }}
-                                      >
-                                        Like
-                                      </Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                      style={{
-                                        flexDirection: 'row',
-                                        alignItems: 'center',
-                                        backgroundColor: 'rgba(232, 137, 94, 0.08)',
-                                        paddingHorizontal: 8,
-                                        paddingVertical: 5,
-                                        borderRadius: 8,
-                                        borderWidth: 0.5,
-                                        borderColor: 'rgba(232, 137, 94, 0.3)',
-                                        gap: 3,
-                                      }}
-                                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                      onPress={() => handleFeedback(route.id, false)}
-                                      activeOpacity={0.7}
-                                    >
-                                      <Ionicons name="thumbs-down-outline" size={11} color={theme.accentHeat} />
-                                      <Text
-                                        style={{
-                                          fontSize: 9,
-                                          fontWeight: '700',
-                                          color: theme.accentHeat,
-                                        }}
-                                      >
-                                        Pass
-                                      </Text>
-                                    </TouchableOpacity>
-                                  </>
-                                )}
-                              </View>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      });
-                    })()}
-                  </View>
-                )}
-
-
                 {/* Gemini Safety Briefing */}
                 {response.gemini_briefing && (
                   <View style={[styles.briefCard, { backgroundColor: theme.isDark ? '#1e1b4b' : '#e0e7ff', borderColor: theme.isDark ? '#312e81' : '#c7d2fe' }]}>
@@ -2904,7 +3204,7 @@ export default function App() {
                       lineHeight: 20,
                     }}
                   >
-                    Swipe up or tap for 3 route options & thermal analysis
+                    Swipe up or tap for route metrics & thermal analysis
                   </Text>
                 </TouchableOpacity>
               )}
@@ -2922,6 +3222,8 @@ export default function App() {
               <Text style={[styles.floatingReshowSheetTxt, { color: theme.textPrimary }]}>Show Metrics</Text>
             </TouchableOpacity>
           )}
+
+          {/* Voice Assistant moved to inline next to destination field */}
         </View>
       )}
 
@@ -3027,6 +3329,30 @@ export default function App() {
 
           <ScrollView contentContainerStyle={styles.aiContainer} showsVerticalScrollIndicator={false}>
 
+            {/* 🎙️ LIVE VOICE ASSISTANT HERO BANNER */}
+            <TouchableOpacity
+              style={[styles.aiVoiceHeroCardRedesigned, { backgroundColor: theme.topCardBg, borderColor: '#10B981' }]}
+              onPress={() => setShowAssistantModal(true)}
+              activeOpacity={0.85}
+            >
+              <View style={styles.aiVoiceHeroLeft}>
+                <View style={[styles.aiVoiceOrbMini, { backgroundColor: '#10B981' }]}>
+                  <Ionicons name="mic" size={24} color="#fff" />
+                </View>
+                <View style={{ marginLeft: 12, flex: 1 }}>
+                  <Text style={[styles.aiVoiceHeroTitle, { color: theme.textPrimary }]}>CoolPath Voice Assistant</Text>
+                  <Text style={[styles.aiVoiceHeroSub, { color: theme.textSecondary }]}>
+                    Live conversational speech & LangChain AI tool routing
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.aiVoiceHeroAction}>
+                <View style={{ backgroundColor: '#10B981', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="sparkles" size={14} color="#fff" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>Talk Live</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
 
             {/* AI Prompt Input Card */}
             <View style={[styles.aiPromptCard, { backgroundColor: theme.topCardBg, borderColor: theme.border }]}>
@@ -4194,6 +4520,28 @@ export default function App() {
           </View>
         </Animated.View>
       )}
+
+      {/* 🎙️ LIVE VOICE ASSISTANT MODAL */}
+      <CoolPathAssistantModal
+        visible={showAssistantModal}
+        onClose={() => setShowAssistantModal(false)}
+        currentOriginText={originText}
+        currentDestText={destText}
+        liveTempC={liveWeather.tempC ?? 32}
+        liveAqi={liveWeather.aqi ?? 42}
+        onPlanRouteAction={(orig, dest, act, paceArg, modeArg) => {
+          setOriginText(orig);
+          setDestText(dest);
+          if (act) setActivity(act as any);
+          if (paceArg && ['slow', 'normal', 'fast'].includes(paceArg)) setPace(paceArg as any);
+          if (modeArg && ['instant', 'scheduled'].includes(modeArg)) setPlanMode(modeArg as any);
+          handlePlanRouteAction(orig, dest, act);
+        }}
+        theme={{
+          ...theme,
+          cardBg: theme.topCardBg,
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -4309,6 +4657,12 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginLeft: 6, borderWidth: 1.5,
   },
   pinBtnActive: { backgroundColor: 'rgba(16,185,129,0.18)', borderColor: '#10B981' },
+  aiVoiceInlineBtn: {
+    width: 30, height: 30, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center', marginLeft: 6,
+    backgroundColor: '#6366f1',
+    shadowColor: '#6366f1', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3,
+  },
   swapRow: {
     flexDirection: 'row',
     alignItems: 'center',

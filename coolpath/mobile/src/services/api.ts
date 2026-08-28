@@ -4,19 +4,17 @@ import type { MissionRequest, MissionResponse } from '../types/mission';
 
 const trimTrailingSlash = (url: string): string => url.replace(/\/+$/, '');
 
-export const RENDER_LIVE_URL =
-  trimTrailingSlash(process.env.EXPO_PUBLIC_API_URL || 'https://coolpath-backend.onrender.com');
-
 export const NGROK_BACKEND_URL =
   trimTrailingSlash(process.env.EXPO_PUBLIC_NGROK_BACKEND_URL || 'https://sheldon-unexcerpted-overwillingly.ngrok-free.dev');
 
 export const GCP_CLOUD_RUN_URL =
-  trimTrailingSlash(process.env.EXPO_PUBLIC_GCP_BACKEND_URL || 'https://coolpath-backend-uc.a.run.app');
+  trimTrailingSlash(process.env.EXPO_PUBLIC_GCP_BACKEND_URL || 'https://coolpath-806112833144.europe-west1.run.app');
 
 const CANDIDATE_HOSTS = [
-  NGROK_BACKEND_URL,      // Primary Ngrok Tunnel Backend
-  'http://10.0.2.2:8000', // Android Emulator loopback
-  'http://localhost:8000', // iOS Simulator / Web
+  NGROK_BACKEND_URL,      // Primary Default: Ngrok Tunnel
+  GCP_CLOUD_RUN_URL,      // Fallback: GCP Cloud Run
+  'http://10.0.2.2:8000', // Local Android Emulator
+  'http://localhost:8000', // Local iOS Simulator / Web
   'http://127.0.0.1:8000',
 ];
 
@@ -267,3 +265,40 @@ export const fetchMLStats = async (): Promise<{ status: string; shade_preference
     return { status: 'offline', shade_preference_percentage: 65.0, history: [], is_bootstrapped: true };
   }
 };
+
+export interface SmartSearchResultItem {
+  id: string;
+  place_name: string;
+  short_name: string;
+  lat: number;
+  lng: number;
+  distance_km: number;
+  ring: string;
+  relevance_score?: number;
+  badge_label?: string;
+  reasoning?: string;
+}
+
+export const fetchSmartSearchSuggestions = async (
+  query: string,
+  originLat: number,
+  originLng: number
+): Promise<SmartSearchResultItem[]> => {
+  if (!query || query.trim().length < 2) return [];
+  try {
+    const baseUrl = await getActiveBaseUrl();
+    const response = await axios.post(
+      `${baseUrl}/api/smart-search`,
+      { query: query.trim(), origin_lat: originLat, origin_lng: originLng },
+      { timeout: 8000, headers: COMMON_HEADERS }
+    );
+    if (response.data && Array.isArray(response.data.results)) {
+      return response.data.results;
+    }
+    return [];
+  } catch (error: any) {
+    console.warn('[SmartSearch API notice]', error.message);
+    return [];
+  }
+};
+

@@ -170,31 +170,70 @@ def download_street_network(origin: Coordinate, destination: Coordinate, network
 # Backward-compatible alias
 download_pedestrian_network = download_street_network
 
+def _sample_points_along_edge(
+    geom,
+    n1_data: dict,
+    n2_data: dict,
+    n_samples: int = 5
+) -> list:
+    """
+    Generate N evenly-spaced (lng, lat, weight) sample points along an edge.
+    Weight = segment_fraction for Haversine-weighted averaging.
+    """
+    from shapely.geometry import LineString
+    import numpy as np
+
+    if geom is not None:
+        # Use the actual edge geometry
+        length = geom.length
+        if length == 0:
+            return [(geom.coords[0][0], geom.coords[0][1], 1.0)]
+        fracs = np.linspace(0.0, 1.0, n_samples)
+        return [(geom.interpolate(f, normalized=True).x,
+                 geom.interpolate(f, normalized=True).y,
+                 1.0 / n_samples) for f in fracs]
+    else:
+        # Interpolate linearly between node coordinates
+        x1, y1 = n1_data.get("x", 0.0), n1_data.get("y", 0.0)
+        x2, y2 = n2_data.get("x", 0.0), n2_data.get("y", 0.0)
+        fracs = [i / max(n_samples - 1, 1) for i in range(n_samples)]
+        return [(x1 + f * (x2 - x1), y1 + f * (y2 - y1), 1.0 / n_samples)
+                for f in fracs]
+
+
 def assign_thermal_weights_and_collapse(
     multi_g,
     departure_offset_minutes: int,
     thermal_provider: ThermalProvider,
     base_speed_mps: float = 1.4,
-    metabolic_factor: float = 1.0
+    metabolic_factor: float = 1.0,
+    rh_pct: float = 30.0,
+    wind_ms: float = 1.0,
+    activity: str = "walking",
 ) -> nx.DiGraph:
     """
-    Takes an OSM graph, calculates edge travel_time and metabolic thermal cost for a specific departure offset,
-    and deterministically collapses into a DiGraph.
-    Runs completely in-memory in ~20ms using STRtree.
+    Phase 2+3 Fix:
+    - N=5 evenly-spaced sample points per edge (Haversine distance-weighted average)
+    - UTCI-based normalized heat cost: C_e = normalize_utci_cost(UTCI) * travel_time * metabolic_factor
+    - Shade ratio stored separately as edge attribute 'shade_ratio'
+    - Activity-aware relative wind and real weather metrics applied to UTCI
     """
+    from app.services.utci_model import compute_utci, normalize_utci_cost
+
+    N_SAMPLES = 5
     G = nx.DiGraph()
     if multi_g is None or not hasattr(multi_g, 'nodes'):
         return G
     if hasattr(multi_g, 'graph') and multi_g.graph is not None:
         G.graph.update(multi_g.graph)
-    
+
     for n, data in multi_g.nodes(data=True):
         G.add_node(n, **data)
-        
+
     for u, v, k, data in multi_g.edges(data=True, keys=True):
         edge_data = dict(data)
         length = float(edge_data.get("length", 0.0))
-        
+
         speed = base_speed_mps
         if "maxspeed" in edge_data and base_speed_mps > 5.0:
             try:
@@ -205,47 +244,61 @@ def assign_thermal_weights_and_collapse(
                     nums = "".join(ch for ch in ms if ch.isdigit() or ch == ".")
                     if nums:
                         val = float(nums)
-                        if "mph" in ms.lower():
-                            speed = val * 0.44704
-                        else:
-                            speed = val / 3.6
+                        speed = val * 0.44704 if "mph" in ms.lower() else val / 3.6
             except Exception:
                 speed = base_speed_mps
 
         if speed <= 0.1:
             speed = base_speed_mps
-            
+
         travel_time = length / speed if length > 0 else 1.0
         edge_data["travel_time"] = travel_time
         edge_data["walk_time"] = travel_time
-        
-        # Midpoint calculation
-        if "geometry" in edge_data:
-            midpoint = edge_data["geometry"].interpolate(0.5, normalized=True)
-            lng, lat = midpoint.x, midpoint.y
-        else:
-            n1 = multi_g.nodes[u]
-            n2 = multi_g.nodes[v]
-            lng = (n1['x'] + n2['x']) / 2.0
-            lat = (n1['y'] + n2['y']) / 2.0
-            
-        temp, source = thermal_provider.get_temperature_for_point(lng, lat, departure_offset_minutes)
-        edge_data["temperature"] = temp
-        edge_data["temperature_source"] = source
-        
-        # Thermal Normalization (M4): H_e = clip((T_e - 25) / 20, 0, 1)
-        normalized_heat = float(np.clip((temp - 25.0) / 20.0, 0.0, 1.0))
-        edge_data["normalized_heat"] = normalized_heat
-        
-        # Edge Thermal Exposure with metabolic multiplier: C_e = H_e * t_e * metabolic_factor
-        edge_data["thermal_cost"] = normalized_heat * travel_time * metabolic_factor
-        
+
+        # ----------------------------------------------------------------
+        # Phase 3: Multi-sample thermal evaluation (N=5 points per edge)
+        # ----------------------------------------------------------------
+        geom = edge_data.get("geometry", None)
+        n1_data = multi_g.nodes[u]
+        n2_data = multi_g.nodes[v]
+        sample_points = _sample_points_along_edge(geom, n1_data, n2_data, N_SAMPLES)
+
+        weighted_utci_sum = 0.0
+        weighted_temp_sum = 0.0
+        total_weight = 0.0
+
+        for lng, lat, w in sample_points:
+            temp, _ = thermal_provider.get_temperature_for_point(lng, lat, departure_offset_minutes)
+            temp_f = float(temp)
+            # Shade ratio: approximated from OSM 'tunnel' or 'covered' tag; default 0 (full sun)
+            shade_ratio = 0.3 if edge_data.get("tunnel") or edge_data.get("covered") else 0.0
+            utci_val, _, _ = compute_utci(temp_f, rh_pct=rh_pct, wind_ms=wind_ms, shade_ratio=shade_ratio, activity=activity)
+            weighted_utci_sum += utci_val * w
+            weighted_temp_sum += temp_f * w
+            total_weight += w
+
+        avg_utci = weighted_utci_sum / total_weight if total_weight > 0 else 38.0
+        avg_temp = weighted_temp_sum / total_weight if total_weight > 0 else 36.0
+
+        # ----------------------------------------------------------------
+        # Phase 4 prep: dimensionless normalized heat cost
+        # C_heat_edge = normalize_utci_cost(avg_utci) * travel_time * metabolic_factor
+        # ----------------------------------------------------------------
+        norm_heat = normalize_utci_cost(avg_utci)
+        thermal_cost = norm_heat * travel_time * metabolic_factor
+
+        edge_data["temperature"] = round(avg_temp, 1)
+        edge_data["utci"] = round(avg_utci, 1)
+        edge_data["normalized_heat"] = round(norm_heat, 3)
+        edge_data["thermal_cost"] = thermal_cost
+        edge_data["shade_ratio"] = shade_ratio
+
         if G.has_edge(u, v):
             if travel_time < G[u][v]["travel_time"]:
                 G[u][v].update(edge_data)
         else:
             G.add_edge(u, v, **edge_data)
-            
+
     return G
 
 def get_walking_graph(origin: Coordinate, destination: Coordinate, departure_offset_minutes: int, thermal_provider: ThermalProvider) -> nx.DiGraph:

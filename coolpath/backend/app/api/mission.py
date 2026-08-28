@@ -13,7 +13,8 @@ from app.agent.gemini_agent import (
     generate_gemini_briefing,
     chat_with_coolpath_assistant,
     transcribe_audio_with_gemini,
-    suggest_places_with_gemini
+    suggest_places_with_gemini,
+    evaluate_search_candidates_with_gemini
 )
 from app.services.aws_polly import synthesize_speech_polly
 from app.services.aws_transcribe import transcribe_audio_aws
@@ -51,16 +52,18 @@ class MissionRequest(BaseModel):
 @router.post("/assistant/chat")
 def assistant_chat(req: AssistantChatRequest):
     """
-    CoolPath Voice Assistant Chat:
+    CoolPath LangChain Voice Assistant Chat:
     Provides voice-friendly conversational responses, location extraction,
-    route planning confirmation, and strict climate-navigation domain boundaries.
+    route planning confirmation, and strict climate-navigation domain boundaries via LangChain.
     """
     try:
-        res = chat_with_coolpath_assistant(req.messages, req.context)
+        from app.agent.langchain_agent import run_langchain_voice_assistant
+        res = run_langchain_voice_assistant(req.messages, req.context)
         return {"status": "ok", "data": res}
     except Exception as e:
         logger.error(f"Assistant chat error: {e}")
-        raise HTTPException(status_code=500, detail={"error": True, "message": str(e)})
+        res = chat_with_coolpath_assistant(req.messages, req.context)
+        return {"status": "ok", "data": res}
 
 class TTSRequest(BaseModel):
     text: str
@@ -85,7 +88,7 @@ def assistant_tts(req: TTSRequest):
 @router.post("/assistant/transcribe")
 def assistant_transcribe(req: TranscribeRequest):
     """
-    Speech-to-Text Transcriber powered by AWS Transcribe & Google Gemini:
+    Speech-to-Text Transcriber powered by Google Cloud Speech-to-Text API:
     Converts recorded user voice audio to text accurately.
     """
     try:
@@ -94,12 +97,13 @@ def assistant_transcribe(req: TranscribeRequest):
             data = data.split(",", 1)[1]
         audio_bytes = base64.b64decode(data)
         
-        # Primary STT: AWS Transcribe
-        transcript = transcribe_audio_aws(audio_bytes, req.mime_type or "audio/webm")
+        # Primary STT: Google Cloud Speech-to-Text API
+        from app.services.gcp_speech import transcribe_audio_gcp
+        transcript = transcribe_audio_gcp(audio_bytes, req.mime_type or "audio/wav")
         
         # Secondary STT Fallback: Gemini Multimodal Audio
         if not transcript:
-            transcript = transcribe_audio_with_gemini(audio_bytes, req.mime_type or "audio/webm")
+            transcript = transcribe_audio_with_gemini(audio_bytes, req.mime_type or "audio/wav")
             
         return {"status": "ok", "transcript": transcript}
     except Exception as e:
@@ -220,6 +224,39 @@ async def plan_mission(req: MissionRequest):
         )
 
 
+@router.get("/demo/scenario")
+async def get_demo_scenario():
+    """
+    Phase 8 Demo-Facing Feature: One-Click Phoenix Demo Scenario.
+    Evaluates pre-cached Phoenix heatwave route (Phoenix Convention Center → Heritage Square).
+    Returns instant pre-computed route options and UTCI comparison card.
+    """
+    phoenix_origin = Coordinate(lat=33.4484, lng=-112.0687)        # Phoenix Convention Center
+    phoenix_dest = Coordinate(lat=33.4503, lng=-112.0628)          # Heritage Square Park
+
+    mission = Mission(
+        origin=phoenix_origin,
+        destination=phoenix_dest,
+        departure_time=datetime.now(),
+        deadline=datetime.now() + timedelta(minutes=30),
+        activity="walking",
+        pace="normal",
+        planning_mode="instant"
+    )
+
+    provider = FortyGuardThermalProvider()
+    result = await optimize_mission(mission, provider)
+
+    result["demo_scenario"] = {
+        "city": "Phoenix, AZ",
+        "condition": "Peak Summer Solar Irradiance (39.5°C Surface Heat)",
+        "scenario_name": "Phoenix Convention Center → Heritage Square Shaded Corridor",
+        "is_cached": True
+    }
+
+    return {"status": "ok", "data": result}
+
+
 class FeedbackRequest(BaseModel):
     route_id: Optional[str] = "coolest"
     route_type: Optional[str] = "coolest"
@@ -303,3 +340,92 @@ async def geocode_location(q: str):
     except Exception as e:
         logger.error(f"Geocode error: {e}")
         raise HTTPException(status_code=500, detail={"error": True, "message": str(e), "type": "geocode_error"})
+
+
+class SmartSearchRequest(BaseModel):
+    query: str
+    origin_lat: float = Field(default=25.2048, description="User origin latitude")
+    origin_lng: float = Field(default=55.2708, description="User origin longitude")
+    max_radius_km: float = Field(default=16.0, description="Max search radius in km")
+
+
+import math
+
+def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2.0)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2.0)**2
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+    return R * c
+
+
+@router.post("/smart-search")
+async def smart_search_places(req: SmartSearchRequest):
+    """
+    Intelligent Exponential Ring Search & Gemini AI Disambiguation Endpoint.
+    """
+    query = req.query.strip()
+    if not query or len(query) < 2:
+        return {"status": "ok", "query": query, "results": []}
+
+    try:
+        candidate_pool = []
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={
+                    "q": query,
+                    "format": "json",
+                    "limit": 10,
+                    "addressdetails": 1,
+                },
+                headers={"User-Agent": "CoolPath-HeatNav/1.0"},
+                timeout=6.0
+            )
+            if resp.status_code == 200:
+                raw_items = resp.json()
+                for item in raw_items:
+                    lat = float(item["lat"])
+                    lng = float(item["lon"])
+                    dist_km = haversine_distance_km(req.origin_lat, req.origin_lng, lat, lng)
+
+                    # Determine exponential ring: 1km, 2km, 4km, 8km, 16km
+                    if dist_km <= 1.0:
+                        ring = "1km"
+                    elif dist_km <= 2.0:
+                        ring = "2km"
+                    elif dist_km <= 4.0:
+                        ring = "4km"
+                    elif dist_km <= 8.0:
+                        ring = "8km"
+                    else:
+                        ring = "16km"
+
+                    display_name = item.get("display_name", "")
+                    short_name = display_name.split(",")[0] if display_name else query
+
+                    candidate_pool.append({
+                        "id": str(item.get("place_id", len(candidate_pool))),
+                        "place_name": display_name,
+                        "short_name": short_name,
+                        "lat": lat,
+                        "lng": lng,
+                        "distance_km": round(dist_km, 2),
+                        "ring": ring
+                    })
+
+        # Evaluate with Gemini LLM Ranker
+        ranked_results = evaluate_search_candidates_with_gemini(
+            query=query,
+            origin_lat=req.origin_lat,
+            origin_lng=req.origin_lng,
+            candidate_pool=candidate_pool
+        )
+
+        return {"status": "ok", "query": query, "results": ranked_results}
+
+    except Exception as e:
+        logger.error(f"Smart search error: {e}")
+        return {"status": "error", "message": str(e), "results": []}
+

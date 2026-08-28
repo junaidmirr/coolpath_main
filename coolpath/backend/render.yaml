@@ -9,6 +9,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: DEMO_MODE
+        value: "false"
       - key: FORTYGUARD_API_KEY
         sync: false
       - key: GEMINI_API_KEY

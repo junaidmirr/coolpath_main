@@ -1,0 +1,1014 @@
+{
+  "timestamp": "2026-08-28T13:24:04.864675",
+  "n_pairs_requested": 50,
+  "n_pairs_evaluated": 50,
+  "total_runtime_seconds": 807.8,
+  "averages": {
+    "time_delta_minutes": 0.0,
+    "utci_reduction_celsius": 0.0,
+    "severe_heat_exposure_reduction_minutes": 0.0,
+    "detour_ratio": 1.0
+  },
+  "individual_results": [
+    {
+      "pair_id": 1,
+      "origin": [
+        33.452789,
+        -112.07925
+      ],
+      "destination": [
+        33.457013,
+        -112.085932
+      ],
+      "fastest_time_min": 13.2,
+      "coolest_time_min": 13.2,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.6,
+      "coolest_utci_c": 39.6,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 13.2,
+      "coolest_severe_min": 13.2,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 2,
+      "origin": [
+        33.453534,
+        -112.053235
+      ],
+      "destination": [
+        33.447582,
+        -112.056384
+      ],
+      "fastest_time_min": 11.5,
+      "coolest_time_min": 11.5,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 11.5,
+      "coolest_severe_min": 11.5,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 3,
+      "origin": [
+        33.444373,
+        -112.064839
+      ],
+      "destination": [
+        33.438567,
+        -112.060737
+      ],
+      "fastest_time_min": 12.0,
+      "coolest_time_min": 12.0,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 12.0,
+      "coolest_severe_min": 12.0,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 4,
+      "origin": [
+        33.451785,
+        -112.055717
+      ],
+      "destination": [
+        33.444991,
+        -112.062208
+      ],
+      "fastest_time_min": 16.3,
+      "coolest_time_min": 16.3,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 16.3,
+      "coolest_severe_min": 16.3,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 5,
+      "origin": [
+        33.446805,
+        -112.075336
+      ],
+      "destination": [
+        33.450316,
+        -112.071852
+      ],
+      "fastest_time_min": 8.6,
+      "coolest_time_min": 8.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 8.6,
+      "coolest_severe_min": 8.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 6,
+      "origin": [
+        33.45695,
+        -112.061888
+      ],
+      "destination": [
+        33.450301,
+        -112.069754
+      ],
+      "fastest_time_min": 17.1,
+      "coolest_time_min": 17.1,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 17.1,
+      "coolest_severe_min": 17.1,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 7,
+      "origin": [
+        33.447571,
+        -112.063439
+      ],
+      "destination": [
+        33.453457,
+        -112.066668
+      ],
+      "fastest_time_min": 13.4,
+      "coolest_time_min": 13.4,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 13.4,
+      "coolest_severe_min": 13.4,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 8,
+      "origin": [
+        33.444558,
+        -112.071318
+      ],
+      "destination": [
+        33.437281,
+        -112.076219
+      ],
+      "fastest_time_min": 15.2,
+      "coolest_time_min": 15.2,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 15.2,
+      "coolest_severe_min": 15.2,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 9,
+      "origin": [
+        33.449068,
+        -112.054977
+      ],
+      "destination": [
+        33.444217,
+        -112.061328
+      ],
+      "fastest_time_min": 17.6,
+      "coolest_time_min": 17.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 17.6,
+      "coolest_severe_min": 17.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 10,
+      "origin": [
+        33.454036,
+        -112.059494
+      ],
+      "destination": [
+        33.447991,
+        -112.065164
+      ],
+      "fastest_time_min": 14.5,
+      "coolest_time_min": 14.5,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 14.5,
+      "coolest_severe_min": 14.5,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 11,
+      "origin": [
+        33.444896,
+        -112.066132
+      ],
+      "destination": [
+        33.452844,
+        -112.072555
+      ],
+      "fastest_time_min": 18.5,
+      "coolest_time_min": 18.5,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 18.5,
+      "coolest_severe_min": 18.5,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 12,
+      "origin": [
+        33.456857,
+        -112.05672
+      ],
+      "destination": [
+        33.449748,
+        -112.051714
+      ],
+      "fastest_time_min": 15.2,
+      "coolest_time_min": 15.2,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 15.2,
+      "coolest_severe_min": 15.2,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 13,
+      "origin": [
+        33.441324,
+        -112.052606
+      ],
+      "destination": [
+        33.445387,
+        -112.047628
+      ],
+      "fastest_time_min": 22.7,
+      "coolest_time_min": 22.7,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 22.7,
+      "coolest_severe_min": 22.7,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 14,
+      "origin": [
+        33.458291,
+        -112.066234
+      ],
+      "destination": [
+        33.461989,
+        -112.059499
+      ],
+      "fastest_time_min": 12.9,
+      "coolest_time_min": 12.9,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.6,
+      "coolest_utci_c": 39.6,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 12.9,
+      "coolest_severe_min": 12.9,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 15,
+      "origin": [
+        33.448569,
+        -112.062494
+      ],
+      "destination": [
+        33.452665,
+        -112.068042
+      ],
+      "fastest_time_min": 11.9,
+      "coolest_time_min": 11.9,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 11.9,
+      "coolest_severe_min": 11.9,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 16,
+      "origin": [
+        33.441818,
+        -112.078587
+      ],
+      "destination": [
+        33.438054,
+        -112.085547
+      ],
+      "fastest_time_min": 11.9,
+      "coolest_time_min": 11.9,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 11.9,
+      "coolest_severe_min": 11.9,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 17,
+      "origin": [
+        33.448443,
+        -112.078094
+      ],
+      "destination": [
+        33.454423,
+        -112.072449
+      ],
+      "fastest_time_min": 14.6,
+      "coolest_time_min": 14.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 14.6,
+      "coolest_severe_min": 14.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 18,
+      "origin": [
+        33.459422,
+        -112.054177
+      ],
+      "destination": [
+        33.45302,
+        -112.060585
+      ],
+      "fastest_time_min": 15.7,
+      "coolest_time_min": 15.7,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 15.7,
+      "coolest_severe_min": 15.7,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 19,
+      "origin": [
+        33.450739,
+        -112.071995
+      ],
+      "destination": [
+        33.454297,
+        -112.068204
+      ],
+      "fastest_time_min": 10.0,
+      "coolest_time_min": 10.0,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 10.0,
+      "coolest_severe_min": 10.0,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 20,
+      "origin": [
+        33.440065,
+        -112.058337
+      ],
+      "destination": [
+        33.447924,
+        -112.063876
+      ],
+      "fastest_time_min": 29.6,
+      "coolest_time_min": 29.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 29.6,
+      "coolest_severe_min": 29.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 21,
+      "origin": [
+        33.442128,
+        -112.061241
+      ],
+      "destination": [
+        33.438364,
+        -112.066938
+      ],
+      "fastest_time_min": 25.8,
+      "coolest_time_min": 25.8,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 25.8,
+      "coolest_severe_min": 25.8,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 22,
+      "origin": [
+        33.455573,
+        -112.064089
+      ],
+      "destination": [
+        33.449578,
+        -112.060992
+      ],
+      "fastest_time_min": 15.8,
+      "coolest_time_min": 15.8,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 15.8,
+      "coolest_severe_min": 15.8,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 23,
+      "origin": [
+        33.458582,
+        -112.053638
+      ],
+      "destination": [
+        33.462779,
+        -112.061028
+      ],
+      "fastest_time_min": 14.4,
+      "coolest_time_min": 14.4,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.6,
+      "coolest_utci_c": 39.6,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 14.4,
+      "coolest_severe_min": 14.4,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 24,
+      "origin": [
+        33.458939,
+        -112.07743
+      ],
+      "destination": [
+        33.466019,
+        -112.081072
+      ],
+      "fastest_time_min": 13.6,
+      "coolest_time_min": 13.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.6,
+      "coolest_utci_c": 39.6,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 13.6,
+      "coolest_severe_min": 13.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 25,
+      "origin": [
+        33.449506,
+        -112.063506
+      ],
+      "destination": [
+        33.455144,
+        -112.055684
+      ],
+      "fastest_time_min": 18.2,
+      "coolest_time_min": 18.2,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 18.2,
+      "coolest_severe_min": 18.2,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 26,
+      "origin": [
+        33.458578,
+        -112.057342
+      ],
+      "destination": [
+        33.452014,
+        -112.049366
+      ],
+      "fastest_time_min": 17.6,
+      "coolest_time_min": 17.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 17.6,
+      "coolest_severe_min": 17.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 27,
+      "origin": [
+        33.452998,
+        -112.066857
+      ],
+      "destination": [
+        33.456603,
+        -112.070177
+      ],
+      "fastest_time_min": 7.6,
+      "coolest_time_min": 7.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 7.6,
+      "coolest_severe_min": 7.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 28,
+      "origin": [
+        33.440421,
+        -112.063382
+      ],
+      "destination": [
+        33.437385,
+        -112.067527
+      ],
+      "fastest_time_min": 10.6,
+      "coolest_time_min": 10.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 10.6,
+      "coolest_severe_min": 10.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 29,
+      "origin": [
+        33.458108,
+        -112.054211
+      ],
+      "destination": [
+        33.452538,
+        -112.047866
+      ],
+      "fastest_time_min": 15.2,
+      "coolest_time_min": 15.2,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 15.2,
+      "coolest_severe_min": 15.2,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 30,
+      "origin": [
+        33.444285,
+        -112.076031
+      ],
+      "destination": [
+        33.4485,
+        -112.068993
+      ],
+      "fastest_time_min": 13.4,
+      "coolest_time_min": 13.4,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 13.4,
+      "coolest_severe_min": 13.4,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 31,
+      "origin": [
+        33.443808,
+        -112.077092
+      ],
+      "destination": [
+        33.44858,
+        -112.071757
+      ],
+      "fastest_time_min": 12.6,
+      "coolest_time_min": 12.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 12.6,
+      "coolest_severe_min": 12.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 32,
+      "origin": [
+        33.454582,
+        -112.059799
+      ],
+      "destination": [
+        33.451278,
+        -112.052796
+      ],
+      "fastest_time_min": 12.3,
+      "coolest_time_min": 12.3,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 12.3,
+      "coolest_severe_min": 12.3,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 33,
+      "origin": [
+        33.442185,
+        -112.074252
+      ],
+      "destination": [
+        33.445886,
+        -112.078645
+      ],
+      "fastest_time_min": 9.8,
+      "coolest_time_min": 9.8,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 9.8,
+      "coolest_severe_min": 9.8,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 34,
+      "origin": [
+        33.444996,
+        -112.052302
+      ],
+      "destination": [
+        33.452036,
+        -112.055555
+      ],
+      "fastest_time_min": 14.0,
+      "coolest_time_min": 14.0,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 14.0,
+      "coolest_severe_min": 14.0,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 35,
+      "origin": [
+        33.459986,
+        -112.054919
+      ],
+      "destination": [
+        33.452354,
+        -112.058751
+      ],
+      "fastest_time_min": 14.7,
+      "coolest_time_min": 14.7,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 14.7,
+      "coolest_severe_min": 14.7,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 36,
+      "origin": [
+        33.449713,
+        -112.073588
+      ],
+      "destination": [
+        33.457225,
+        -112.078482
+      ],
+      "fastest_time_min": 15.8,
+      "coolest_time_min": 15.8,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 15.8,
+      "coolest_severe_min": 15.8,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 37,
+      "origin": [
+        33.459706,
+        -112.072044
+      ],
+      "destination": [
+        33.464132,
+        -112.06827
+      ],
+      "fastest_time_min": 9.8,
+      "coolest_time_min": 9.8,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.6,
+      "coolest_utci_c": 39.6,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 9.8,
+      "coolest_severe_min": 9.8,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 38,
+      "origin": [
+        33.445934,
+        -112.050939
+      ],
+      "destination": [
+        33.439194,
+        -112.054189
+      ],
+      "fastest_time_min": 22.0,
+      "coolest_time_min": 22.0,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 22.0,
+      "coolest_severe_min": 22.0,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 39,
+      "origin": [
+        33.449536,
+        -112.052418
+      ],
+      "destination": [
+        33.446251,
+        -112.059675
+      ],
+      "fastest_time_min": 13.2,
+      "coolest_time_min": 13.2,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 13.2,
+      "coolest_severe_min": 13.2,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 40,
+      "origin": [
+        33.44137,
+        -112.077961
+      ],
+      "destination": [
+        33.436352,
+        -112.083856
+      ],
+      "fastest_time_min": 12.8,
+      "coolest_time_min": 12.8,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 12.8,
+      "coolest_severe_min": 12.8,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 41,
+      "origin": [
+        33.440795,
+        -112.07754
+      ],
+      "destination": [
+        33.448468,
+        -112.083889
+      ],
+      "fastest_time_min": 17.8,
+      "coolest_time_min": 17.8,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 17.8,
+      "coolest_severe_min": 17.8,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 42,
+      "origin": [
+        33.446284,
+        -112.072032
+      ],
+      "destination": [
+        33.439925,
+        -112.066745
+      ],
+      "fastest_time_min": 14.5,
+      "coolest_time_min": 14.5,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 14.5,
+      "coolest_severe_min": 14.5,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 43,
+      "origin": [
+        33.45858,
+        -112.051928
+      ],
+      "destination": [
+        33.453289,
+        -112.055294
+      ],
+      "fastest_time_min": 10.7,
+      "coolest_time_min": 10.7,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 10.7,
+      "coolest_severe_min": 10.7,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 44,
+      "origin": [
+        33.444263,
+        -112.072044
+      ],
+      "destination": [
+        33.451667,
+        -112.076892
+      ],
+      "fastest_time_min": 14.5,
+      "coolest_time_min": 14.5,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 14.5,
+      "coolest_severe_min": 14.5,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 45,
+      "origin": [
+        33.443155,
+        -112.054988
+      ],
+      "destination": [
+        33.449213,
+        -112.061327
+      ],
+      "fastest_time_min": 26.3,
+      "coolest_time_min": 26.3,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 26.3,
+      "coolest_severe_min": 26.3,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 46,
+      "origin": [
+        33.451092,
+        -112.052047
+      ],
+      "destination": [
+        33.443397,
+        -112.05637
+      ],
+      "fastest_time_min": 37.2,
+      "coolest_time_min": 37.2,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 37.2,
+      "coolest_severe_min": 37.2,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 47,
+      "origin": [
+        33.457794,
+        -112.057727
+      ],
+      "destination": [
+        33.453433,
+        -112.064316
+      ],
+      "fastest_time_min": 15.6,
+      "coolest_time_min": 15.6,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 15.6,
+      "coolest_severe_min": 15.6,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 48,
+      "origin": [
+        33.444072,
+        -112.060973
+      ],
+      "destination": [
+        33.449599,
+        -112.053446
+      ],
+      "fastest_time_min": 28.4,
+      "coolest_time_min": 28.4,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 28.4,
+      "coolest_severe_min": 28.4,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 49,
+      "origin": [
+        33.456922,
+        -112.077231
+      ],
+      "destination": [
+        33.464069,
+        -112.080249
+      ],
+      "fastest_time_min": 12.9,
+      "coolest_time_min": 12.9,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.6,
+      "coolest_utci_c": 39.6,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 12.9,
+      "coolest_severe_min": 12.9,
+      "severe_reduction_min": 0.0
+    },
+    {
+      "pair_id": 50,
+      "origin": [
+        33.455422,
+        -112.060887
+      ],
+      "destination": [
+        33.45923,
+        -112.055128
+      ],
+      "fastest_time_min": 11.5,
+      "coolest_time_min": 11.5,
+      "time_delta_min": 0.0,
+      "fastest_utci_c": 39.7,
+      "coolest_utci_c": 39.7,
+      "utci_reduction_c": 0.0,
+      "fastest_severe_min": 11.5,
+      "coolest_severe_min": 11.5,
+      "severe_reduction_min": 0.0
+    }
+  ]
+}

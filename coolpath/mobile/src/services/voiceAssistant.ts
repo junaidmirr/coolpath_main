@@ -62,9 +62,9 @@ export const callAssistantBackend = async (
     console.warn('[VoiceAssistant call notice]', msg);
     return {
       spoken_response:
-        "I am ready to help you navigate through shaded, cooler urban corridors. Where would you like to go?",
+        "I'm ready to help you navigate through shaded, cooler urban corridors. Where would you like to go?",
       display_text:
-        "🌿 **CoolPath Assistant**\n\nI can help you navigate cities while avoiding extreme heat and high asphalt temperatures.\n\nWhere would you like to go?",
+        "I can help you navigate cities while avoiding extreme heat and high asphalt temperatures.\n\nWhere would you like to go?",
       action: null,
       action_data: null,
       suggested_replies: ["Go to Central Park", "Times Square to Brooklyn", "Check Weather"],
@@ -81,7 +81,7 @@ export const transcribeAudio = async (
     const response = await axios.post(
       `${baseUrl}/api/assistant/transcribe`,
       { audio_base64: audioBase64, mime_type: mimeType },
-      { timeout: 25000, headers: COMMON_HEADERS }
+      { timeout: 20000, headers: COMMON_HEADERS }
     );
     if (response.data && response.data.transcript) {
       return response.data.transcript;

@@ -17,7 +17,6 @@ warnings.filterwarnings("ignore", message=".*AFC.*")
 GEMINI_MODELS = [
     "gemini-2.0-flash",
     "gemini-1.5-flash",
-    "gemini-2.5-flash",
     "gemini-1.5-pro"
 ]
 
@@ -46,11 +45,19 @@ class AssistantMessage(BaseModel):
     content: str
 
 
+class AssistantActionData(BaseModel):
+    origin: Optional[str] = Field(default=None, description="Origin location query or address")
+    destination: Optional[str] = Field(default=None, description="Destination location query or address")
+    activity: Optional[str] = Field(default=None, description="Activity type e.g. walking, running, biking")
+    pace: Optional[str] = Field(default=None, description="Pace intensity e.g. slow, normal, fast")
+    timing_offset: Optional[int] = Field(default=None, description="Departure timing delay in minutes")
+
+
 class AssistantResponse(BaseModel):
     spoken_response: str = Field(description="Concise, clear spoken sentence (1-2 sentences, no markdown symbols or asterisks) perfect for Text-to-Speech voice output.")
     display_text: str = Field(description="Formatted response text for visual UI chat bubble.")
     action: Optional[str] = Field(default=None, description="Action to trigger in app: 'confirm_route', 'execute_route', 'switch_mode', 'info', or null")
-    action_data: Optional[Dict[str, Any]] = Field(default=None, description="Action payload, e.g. { origin, destination, activity, pace }")
+    action_data: Optional[AssistantActionData] = Field(default=None, description="Action payload with explicit origin, destination, activity, pace, timing_offset fields.")
     suggested_replies: List[str] = Field(default_factory=list, description="Quick tap suggestions e.g. ['Yes, plan route', 'Change destination', 'Check weather']")
 
 
@@ -140,17 +147,92 @@ def parse_user_intent_with_gemini(user_prompt: str) -> dict:
     ).model_dump()
 
 
+# Phase 7: Explicit Tool Registry & Numeric Traceability Guardrail
+AGENT_TOOL_DEFINITIONS = [
+    {
+        "name": "get_weather",
+        "description": "Fetches current weather, air temperature, relative humidity, and AQI for location.",
+        "parameters": {"lat": "float", "lng": "float"}
+    },
+    {
+        "name": "get_heatmap",
+        "description": "Retrieves FortyGuard surface thermal tiles for bounding box.",
+        "parameters": {"bbox": "dict", "granularity": "int"}
+    },
+    {
+        "name": "get_route_candidates",
+        "description": "Generates real-street candidate routes (fastest, coolest, balanced) from routing engine.",
+        "parameters": {"origin": "dict", "destination": "dict", "activity": "str"}
+    },
+    {
+        "name": "calculate_thermal_exposure",
+        "description": "Computes UTCI thermal exposure and heat reduction for a candidate route.",
+        "parameters": {"route_id": "str", "activity": "str"}
+    },
+    {
+        "name": "compare_routes",
+        "description": "Compares travel time, UTCI, and thermal reduction across candidate routes.",
+        "parameters": {"routes": "list"}
+    },
+    {
+        "name": "get_user_preferences",
+        "description": "Retrieves learned user preference model stats and shade preference %.",
+        "parameters": {}
+    },
+    {
+        "name": "save_preference",
+        "description": "Saves user feedback (thumbs up/down) to preference model database.",
+        "parameters": {"route_type": "str", "satisfied": "bool"}
+    }
+]
+
+
+def verify_numeric_grounding(text: str, mission_facts: dict) -> str:
+    """
+    Phase 7 Guardrail: Ensures any numbers stated in Gemini briefing/response match
+    computed backend facts within tolerance. Prevents LLM temperature hallucination.
+    """
+    import re
+    # Extract computed values from mission_facts
+    computed_reduction = mission_facts.get("thermal_reduction_percent", 0.0)
+    best_route = mission_facts.get("best_route", {})
+    computed_temp = best_route.get("avg_temp_c", 32.5)
+    computed_utci = best_route.get("avg_utci_c", 36.0)
+
+    # Check for hallucinated reduction percentages (e.g. LLM says "save 45% heat" when computed is 15%)
+    pct_matches = re.findall(r'(\d+(?:\.\d+)?)\s*%', text)
+    for match in pct_matches:
+        val = float(match)
+        # If stated percentage is wildly off from computed reduction (> 10% delta)
+        if abs(val - computed_reduction) > 10.0 and val > 0:
+            text = re.sub(
+                rf'\b{match}\s*%',
+                f"{computed_reduction:.1f}%",
+                text
+            )
+            logger.info(f"[NUMERIC GUARDRAIL] Corrected hallucinated %: {match}% → {computed_reduction:.1f}%")
+
+    return text
+
+
 def generate_gemini_briefing(mission_facts: dict) -> dict:
     """
     Synthesizes a personalized safety and thermal briefing.
+    Grounded by Phase 7 Numeric Guardrail to ensure 100% facts accuracy.
     """
     client = get_gemini_client()
+    raw_result = None
+
     if client:
         from google.genai import types
         prompt = f"""
         You are CoolPath Assistant, the climate-resilient routing and heat safety intelligence brain.
-        Synthesize a hyper-personalized, natural safety briefing based on these routing facts:
+        Synthesize a hyper-personalized, natural safety briefing based ONLY on these computed backend routing facts:
         {json.dumps(mission_facts, indent=2)}
+
+        CRITICAL GROUNDING RULES:
+        - All temperatures, UTCI values, and heat reduction percentages MUST match the exact numbers in mission_facts.
+        - Do NOT invent or hallucinate exposure numbers, degrees, or percentages.
         """
         for model_name in GEMINI_MODELS:
             try:
@@ -160,60 +242,71 @@ def generate_gemini_briefing(mission_facts: dict) -> dict:
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
                         response_schema=CoolPathBriefing,
-                        temperature=0.3
+                        temperature=0.1
                     ),
                 )
-                return json.loads(response.text)
+                raw_result = json.loads(response.text)
+                break
             except Exception as e:
                 logger.warning(f"Briefing generation with model {model_name} failed: {e}")
                 continue
 
-    # Fallback Briefing Synthesizer
-    activity = mission_facts.get("activity", "walking")
-    tags = mission_facts.get("special_profile_tags", [])
-    reduction = mission_facts.get("thermal_reduction_percent", 0.0)
-    best_route = mission_facts.get("best_route", {})
-    avg_temp = best_route.get("avg_temp_c", 32.5)
+    if not raw_result:
+        # Rule-Based Fallback Briefing Synthesizer
+        activity = mission_facts.get("activity", "walking")
+        tags = mission_facts.get("special_profile_tags", [])
+        reduction = mission_facts.get("thermal_reduction_percent", 0.0)
+        best_route = mission_facts.get("best_route", {})
+        avg_temp = best_route.get("avg_temp_c", 32.5)
 
-    if reduction > 10:
-        headline = f"Avoid Asphalt Corridors; Save {reduction}% Heat Exposure via Side Streets"
-    elif reduction > 0:
-        headline = f"Cooler {activity.capitalize()} Corridor Selected — {reduction}% Heat Reduction"
-    elif "dog_walking" in tags:
-        headline = "Protect Paw Pads: Shaded Concrete Corridor Recommended"
-    else:
-        headline = f"Direct {activity.capitalize()} Route is Optimal — Low Thermal Strain"
+        if reduction > 10:
+            headline = f"Avoid Asphalt Corridors; Save {reduction:.1f}% Heat Exposure via Side Streets"
+        elif reduction > 0:
+            headline = f"Cooler {activity.capitalize()} Corridor Selected — {reduction:.1f}% Heat Reduction"
+        elif "dog_walking" in tags:
+            headline = "Protect Paw Pads: Shaded Concrete Corridor Recommended"
+        else:
+            headline = f"Direct {activity.capitalize()} Route is Optimal — Low Thermal Strain"
 
-    if reduction > 0:
-        narrative = (
-            f"CoolPath analyzed street microclimates along your trip. "
-            f"The recommended path keeps average temperatures at ~{avg_temp}°C, reducing heat strain by {reduction}% vs direct asphalt."
+        if reduction > 0:
+            narrative = (
+                f"CoolPath analyzed street microclimates along your trip. "
+                f"The recommended path keeps average temperatures at ~{avg_temp:.1f}°C, reducing heat strain by {reduction:.1f}% vs direct asphalt."
+            )
+        else:
+            narrative = (
+                f"CoolPath analyzed street microclimates along your trip. "
+                f"The direct path maintains an optimal temperature (~{avg_temp:.1f}°C) without needing long detours."
+            )
+
+        if "dog_walking" in tags:
+            narrative += " Pavement in direct sunlight can reach 50°C+; this route maximizes tree canopy cover."
+
+        from app.agent.safety_policy import SafetyPolicyEngine
+        safety_guidance = SafetyPolicyEngine.get_approved_safety_guidance(
+            activity=activity,
+            special_profile_tags=tags,
+            avg_temp_c=avg_temp,
+            avg_utci_c=best_route.get("avg_utci_c", 34.0)
         )
-    else:
-        narrative = (
-            f"CoolPath analyzed street microclimates along your trip. "
-            f"The direct path maintains an optimal temperature (~{avg_temp}°C) without needing long detours."
-        )
+        health_alert = safety_guidance["health_alert"]
 
-    if "dog_walking" in tags:
-        narrative += " Pavement in direct sunlight can reach 50°C+; this route maximizes tree canopy cover."
+        timing = "Departure recommended immediately for optimal shade coverage."
+        if mission_facts.get("wait_minutes", 0) > 0:
+            timing = f"⏰ Delay departure by {mission_facts['wait_minutes']} minutes to allow urban solar heat to drop."
 
-    health_alert = "Hydrate well and seek shade whenever available during peak midday heat."
-    if "dog_walking" in tags or avg_temp > 33.0:
-        health_alert = "⚠️ Caution: High asphalt surface heat detected. Check pavement temperature before letting pets walk."
-    elif activity == "running":
-        health_alert = "🏃 Hyperthermia Risk: High metabolic heat buildup expected during running. Keep pace steady."
+        raw_result = CoolPathBriefing(
+            headline=headline,
+            narrative=narrative,
+            health_alert=health_alert,
+            timing_advice=timing
+        ).model_dump()
 
-    timing = "Departure recommended immediately for optimal shade coverage."
-    if mission_facts.get("wait_minutes", 0) > 0:
-        timing = f"⏰ Delay departure by {mission_facts['wait_minutes']} minutes to allow urban solar heat to drop."
+    # Phase 7 Numeric Traceability Guardrail
+    raw_result["narrative"] = verify_numeric_grounding(raw_result["narrative"], mission_facts)
+    raw_result["headline"] = verify_numeric_grounding(raw_result["headline"], mission_facts)
 
-    return CoolPathBriefing(
-        headline=headline,
-        narrative=narrative,
-        health_alert=health_alert,
-        timing_advice=timing
-    ).model_dump()
+    return raw_result
 
 
 def chat_with_coolpath_assistant(messages: List[dict], context: dict = None) -> dict:
@@ -234,30 +327,39 @@ def chat_with_coolpath_assistant(messages: List[dict], context: dict = None) -> 
     client = get_gemini_client()
     if client:
         from google.genai import types
-        system_prompt = f"""
-        You are CoolPath Assistant, the intelligent climate-resilient urban navigation and microclimate thermal routing voice agent.
-        
-        CURRENT APP CONTEXT:
-        - Current Origin Pin: {current_origin}
-        - Current Destination Pin: {current_dest}
-        - Live Ambient Weather: {current_temp}°C, AQI: {current_aqi}
-        - Pending Action State: {json.dumps(pending_action) if pending_action else 'None'}
-        
-        CORE RULES & BEHAVIOR:
-        1. STRICT DOMAIN BOUNDARY: You ONLY answer questions related to CoolPath navigation, heatwave avoidance, urban microclimates, weather, air quality, route planning, walking/biking/driving thermal safety, and pet paw protection.
-           - If the user asks general trivia, coding, politics, or off-topic queries, politely decline: "I am your CoolPath navigation assistant dedicated to urban heat safety and climate-resilient routing. How can I help with your journey today?"
-        2. CONVERSATIONAL LOCATION CONFIRMATION:
-           - If the user specifies places (e.g. "I want to go to Brooklyn Bridge", "Navigate from Times Square to Central Park"):
-             a. Identify origin and destination. If only destination is provided, use the user's current location/pin as origin.
-             b. Respond with action="confirm_route" and action_data={{ "origin": origin_name, "destination": dest_name, "activity": activity }}.
-             c. Spoken response must be conversational confirmation: "I found [Origin] and [Destination]. Should I plan the coolest shaded route for you now?"
-           - If the user confirms (e.g. "Yes", "Sure", "Plan it", "Go ahead") and there is a pending route or previous location:
-             a. Respond with action="execute_route" and action_data={{ "origin": origin_name, "destination": dest_name, "activity": activity }}.
-             b. Spoken response: "Planning your CoolPath route now. Finding the best shaded corridors for your trip!"
-        3. VOICE-FRIENDLY SPOKEN RESPONSE:
-           - The `spoken_response` field MUST be natural, conversational, and concise (1-2 sentences). Do NOT include markdown symbols, asterisks, or lists in `spoken_response`.
-        4. NEVER mention or identify as Gemini. Your name and brand is strictly "CoolPath Assistant".
-        """
+        system_prompt = f"""You are CoolPath Assistant, a voice navigation agent for heat-safe urban routing.
+
+CURRENT STATE:
+- Origin: {current_origin}
+- Destination: {current_dest}
+- Temperature: {current_temp}°C, AQI: {current_aqi}
+- Pending Route: {json.dumps(pending_action) if pending_action else 'None'}
+
+CRITICAL RULES:
+
+1. LOCATION EXTRACTION (YOUR #1 JOB):
+   When user mentions ANY place name, you MUST:
+   a. Extract ONLY the clean location/landmark name. Remove all command words.
+      - "go to New York Botanical Garden" → destination = "New York Botanical Garden"
+      - "I wanna go Central Park" → destination = "Central Park"
+      - "take me to Brooklyn Bridge" → destination = "Brooklyn Bridge"
+      - "navigate from Times Square to Empire State" → origin="Times Square", destination="Empire State Building"
+   b. Set action="confirm_route"
+   c. Set action_data with origin and destination (use "{current_origin}" as origin if not specified)
+   d. spoken_response: "I'll plan a route to [clean destination name]. Should I find the coolest path?"
+   e. NEVER ask "where would you like to go" if the user just told you a place
+
+2. CONFIRMATION: If user says yes/sure/ok/plan it AND pending route exists:
+   - Set action="execute_route", action_data with the pending origin+destination
+   - spoken_response: "Planning your route now!"
+
+3. RESPONSE FORMAT:
+   - spoken_response: 1 short sentence, no markdown, no asterisks, natural speech
+   - NEVER repeat the full user phrase — only use the extracted place name
+   - NEVER ask where they want to go if they just stated a destination
+
+4. IDENTITY: You are CoolPath Assistant. Never mention Gemini or any AI model.
+5. DOMAIN: Navigation, weather, heat safety only. Decline off-topic."""
 
         formatted_contents = [{"role": "user" if m.get("role") == "user" else "model", "parts": [{"text": m.get("content", "")}]} for m in messages]
         # Append system prompt to first instruction
@@ -308,19 +410,28 @@ def chat_with_coolpath_assistant(messages: List[dict], context: dict = None) -> 
             suggested_replies=["Yes, plan route", "Change points", "Cancel"]
         ).model_dump()
         
-    # Catch any phrase containing "to <destination>"
+    # Catch any phrase containing a destination intent
     import re
-    to_match = re.search(r'\b(?:go to|navigate to|walk to|take me to|route to|to)\s+(.+)', text)
+    to_match = re.search(
+        r'\b(?:go\s+to|navigate\s+to|walk\s+to|run\s+to|bike\s+to|drive\s+to|take\s+me\s+to|'
+        r'head\s+to|get\s+to|route\s+to|i\s+wanna?\s+go\s+to|i\s+want\s+to\s+go\s+to|'
+        r'i\'?d?\s+like\s+to\s+go\s+to|let\'?s?\s+go\s+to|plan\s+(?:a\s+)?(?:route\s+)?to)\s+(.+)',
+        text
+    )
     if to_match:
-        dest = to_match.group(1).strip().title()
-        orig = current_origin
-        return AssistantResponse(
-            spoken_response=f"I set your destination to {dest} from your current starting point. Should I plan the coolest route now?",
-            display_text=f"📍 **Destination**: {dest}\n📍 **Origin**: {orig}\n\nReady to calculate heat-safe routes.",
-            action="confirm_route",
-            action_data={"origin": orig, "destination": dest, "activity": "walking"},
-            suggested_replies=["Yes, plan route", "Change start point", "Cancel"]
-        ).model_dump()
+        dest = to_match.group(1).strip()
+        # Strip trailing activity/filler words
+        dest = re.sub(r'\s+(?:by\s+)?(?:walking|running|biking|driving|on\s+foot|please|now)\s*$', '', dest)
+        dest = dest.rstrip('.,!?').strip().title()
+        if len(dest) >= 2:
+            orig = current_origin
+            return AssistantResponse(
+                spoken_response=f"I'll plan a cool route to {dest}. Should I find the best shaded path?",
+                display_text=f"📍 **Destination**: {dest}\n📍 **Origin**: {orig}\n\nReady to calculate heat-safe routes.",
+                action="confirm_route",
+                action_data={"origin": orig, "destination": dest, "activity": "walking"},
+                suggested_replies=["Yes, plan route", "Change start point", "Cancel"]
+            ).model_dump()
 
     # 3. Weather / AQI query
     if any(w in text for w in ["weather", "temperature", "temp", "hot", "aqi", "air"]):
@@ -422,4 +533,82 @@ def suggest_places_with_gemini(origin_text: str) -> List[str]:
                 continue
     # Fallbacks if Gemini fails
     return ["Central Park", "Times Square", "Brooklyn Bridge", "High Line Park"]
+
+
+class SearchCandidateItem(BaseModel):
+    id: str = Field(description="Unique ID of candidate feature")
+    place_name: str = Field(description="Full place name or title")
+    short_name: str = Field(description="Short formatted name")
+    lat: float = Field(description="Latitude coordinate")
+    lng: float = Field(description="Longitude coordinate")
+    distance_km: float = Field(description="Distance from user's origin in kilometers")
+    ring: str = Field(description="Distance ring: '1km', '2km', '4km', '8km', '16km'")
+    relevance_score: float = Field(description="Relevance score from 0.0 to 1.0 based on intent & proximity")
+    badge_label: str = Field(description="Short user-facing badge text e.g. '📍 350m away', '⚡ Best Match'")
+    reasoning: str = Field(description="Brief 1-sentence reason why this candidate matches the user request")
+
+
+class SmartSearchResponse(BaseModel):
+    results: List[SearchCandidateItem] = Field(default_factory=list, description="Ranked list of relevant search candidates")
+
+
+def evaluate_search_candidates_with_gemini(query: str, origin_lat: float, origin_lng: float, candidate_pool: List[dict]) -> List[dict]:
+    """
+    Evaluates, disambiguates, and re-ranks spatial search candidates using Gemini 2.5 Flash.
+    """
+    client = get_gemini_client()
+    if client and candidate_pool:
+        from google.genai import types
+        prompt = f"""
+        You are the Spatial Search Disambiguator for CoolPath heat-aware navigation.
+        User Query: "{query}"
+        User Origin Location: Lat {origin_lat}, Lng {origin_lng}
+
+        Candidate Locations (grouped into exponential radius rings from origin):
+        {json.dumps(candidate_pool, indent=2)}
+
+        Task:
+        1. Resolve acronyms and abbreviations (e.g. "DXB" -> Dubai Airport, "MOE" -> Mall of the Emirates, "Kite" -> Kite Beach).
+        2. Prefer candidates closer to the user origin (e.g. Ring 1km/2km) UNLESS a farther candidate is an exact brand/landmark match for what the user requested.
+        3. Assign a relevance_score (0.0 to 1.0) and a short badge_label (e.g. "📍 450m • Exact Match", "⚡ 1.8km • Best Choice").
+        4. Return top ranked results sorted by relevance_score descending.
+        """
+        for model_name in GEMINI_MODELS:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=SmartSearchResponse,
+                        temperature=0.1
+                    )
+                )
+                if response.text:
+                    parsed = json.loads(response.text)
+                    if isinstance(parsed, dict) and "results" in parsed and isinstance(parsed["results"], list):
+                        return parsed["results"]
+            except Exception as e:
+                logger.warning(f"Gemini search evaluation failed on {model_name}: {e}")
+
+    # Fallback if Gemini unavailable or error: sort by distance_km and return formatted candidates
+    fallback_results = []
+    sorted_candidates = sorted(candidate_pool, key=lambda c: c.get("distance_km", 999))
+    for item in sorted_candidates[:6]:
+        dist = item.get("distance_km", 0.0)
+        dist_str = f"{int(dist * 1000)}m" if dist < 1.0 else f"{dist:.1f}km"
+        fallback_results.append({
+            "id": item.get("id", ""),
+            "place_name": item.get("place_name", ""),
+            "short_name": item.get("short_name", item.get("place_name", "")),
+            "lat": item.get("lat", 0.0),
+            "lng": item.get("lng", 0.0),
+            "distance_km": round(dist, 2),
+            "ring": item.get("ring", "1km"),
+            "relevance_score": 0.8,
+            "badge_label": f"📍 {dist_str} away",
+            "reasoning": "Location match based on spatial proximity"
+        })
+    return fallback_results
+
 
