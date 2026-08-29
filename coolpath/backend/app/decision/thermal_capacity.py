@@ -82,6 +82,7 @@ class ThermalCapacityAdapter:
             thermal_policy_met=thermal_policy_met,
             priority_policy_met=priority_policy_met,
             departure_offset_minutes=departure_offset_minutes,
+            departure_at=departure_at,
             travel_minutes=travel_minutes,
             outdoor_minutes=outdoor_minutes,
             completion_time=completion_time,
