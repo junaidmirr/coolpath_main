@@ -221,7 +221,32 @@ def test_15_expired_evidence():
     base_time, state, policy, ev = setup_fixtures()
     ev.freshness_status = "EXPIRED"
     routes = [{"route_id": "route_A", "travel_minutes": 15, "calculated_exposure": {0: 35.0}}]
-    decision = run_engine(base_time, state, policy, ev, routes, [0])
     
+    # Check adapter output directly
+    candidates = CandidateGenerator.generate_candidates(
+        state, routes, [0], base_time, ev.evidence_id
+    )
+    c = candidates[0]
+    feasibility = ThermalCapacityAdapter.evaluate_candidate(
+        candidate_id=c.candidate_id,
+        route_id=c.route_id,
+        departure_at=c.departure_at,
+        departure_offset_minutes=c.departure_offset_minutes,
+        travel_minutes=c.travel_minutes,
+        outdoor_minutes=c.outdoor_minutes,
+        sla_deadline=state.sla_deadline,
+        priority=state.priority,
+        thermal_policy=policy,
+        thermal_evidence=ev,
+        calculated_exposure=c.calculated_thermal_exposure,
+        unit=c.unit
+    )
+    
+    assert feasibility.thermal_policy_met is None
+    assert any("NOT_EVALUATED" in w for w in feasibility.warnings)
+    assert not any("EXPIRED_EVIDENCE" in v for v in feasibility.violations)
+    
+    # Engine output should still be ESCALATE due to lack of feasible plan
+    decision = run_engine(base_time, state, policy, ev, routes, [0])
     assert decision.action == "ESCALATE"
-    assert ReasonCode.NO_POLICY_COMPLIANT_PLAN in decision.reason_codes
+    assert ReasonCode.REQUIRED_THERMAL_EVIDENCE_UNAVAILABLE in decision.reason_codes

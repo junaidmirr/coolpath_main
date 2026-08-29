@@ -9,7 +9,7 @@ class MissionFeasibility(BaseModel):
     feasible: bool
 
     sla_met: bool
-    thermal_policy_met: bool
+    thermal_policy_met: Optional[bool] = None
     priority_policy_met: Optional[bool] = None
 
     departure_offset_minutes: int
