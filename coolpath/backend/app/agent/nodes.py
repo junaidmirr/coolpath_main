@@ -226,6 +226,36 @@ def select_decision_node(state: CoolPathDispatchState) -> CoolPathDispatchState:
         current_route_id="fastest"
     )
     state["selected_decision"] = decision
+    
+    # Phase 5: Persist the decision
+    try:
+        from app.db.database import get_db
+        from app.repositories.decision_repository import DecisionRepository
+        
+        db = next(get_db())
+        repo = DecisionRepository(db)
+        repo.persist_decision_and_candidates(
+            mission_id=mission.session_id,
+            decision=decision,
+            candidates=feas,
+            policy_id=mission.thermal_policy_id,
+            policy_version=mission.thermal_policy_version,
+            evaluation_time=datetime.now(timezone.utc)
+        )
+        
+        repo.append_decision_event(
+            event_type="DECISION_SELECTED",
+            mission_id=mission.session_id,
+            mission_version=mission.mission_version,
+            decision_id=None, # Generated internally
+            reason_codes=[r.value for r in decision.reason_codes],
+            payload={"action": decision.action}
+        )
+        
+        db.commit()
+    except Exception as e:
+        print(f"Failed to persist decision: {e}")
+        
     return state
 
 # --- 9. Explain Node ---
@@ -241,7 +271,18 @@ def supersession_guard_node(state: CoolPathDispatchState) -> CoolPathDispatchSta
     eval_version = state.get("evaluation_version")
     curr_version = state.get("current_mission_version")
     
-    if eval_version != curr_version:
+    # Phase 5: Check durable DB version
+    try:
+        from app.db.database import get_db
+        from app.services.mission_version_store import PostgresMissionVersionStore
+        db = next(get_db())
+        store = PostgresMissionVersionStore(db)
+        is_superseded = store.is_superseded(state.get("mission_id"), eval_version)
+    except Exception as e:
+        # Fallback to local memory state during tests where DB isn't initialized
+        is_superseded = (eval_version != curr_version)
+    
+    if is_superseded:
         state["is_superseded"] = True
         _add_event(state, "DECISION_SUPERSEDED", "Mission state changed during evaluation. Result discarded.")
     else:

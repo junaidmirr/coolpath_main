@@ -1,6 +1,7 @@
 from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 import os
+import sys
 
 from app.agent.state import CoolPathDispatchState
 from app.agent.nodes import (
@@ -20,12 +21,39 @@ from app.agent.nodes import (
     supersession_guard_node
 )
 
+# Global pool for the checkpointer
+_checkpointer_pool = None
+
 def create_checkpointer():
     """
     Checkpointer factory.
-    Uses MemorySaver for Phase 4 testing and local execution.
-    Can be seamlessly swapped to PostgresSaver in Phase 5.
+    Uses MemorySaver for Phase 4 testing and local execution unless configured otherwise.
+    Uses PostgresSaver in Phase 5 production, with a hard-fail if unavailable.
     """
+    env = os.getenv("ENVIRONMENT", "local")
+    
+    if env == "production" or os.getenv("USE_POSTGRES_SAVER", "false").lower() == "true":
+        try:
+            from langgraph.checkpoint.postgres import PostgresSaver
+            from psycopg_pool import ConnectionPool
+            from app.config import DATABASE_URL
+            
+            global _checkpointer_pool
+            if _checkpointer_pool is None:
+                _checkpointer_pool = ConnectionPool(
+                    conninfo=DATABASE_URL,
+                    max_size=5,
+                    kwargs={"autocommit": True}
+                )
+            
+            saver = PostgresSaver(_checkpointer_pool)
+            saver.setup()
+            return saver
+        except Exception as e:
+            # Hard fail in production
+            print(f"CRITICAL: Failed to initialize PostgresSaver in production: {e}")
+            sys.exit(1)
+            
     return MemorySaver()
 
 # Initialize the StateGraph

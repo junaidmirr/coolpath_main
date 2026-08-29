@@ -13,6 +13,7 @@ class MissionFeasibility(BaseModel):
     priority_policy_met: Optional[bool] = None
 
     departure_offset_minutes: int
+    departure_at: datetime
     travel_minutes: float
     outdoor_minutes: float
     completion_time: datetime

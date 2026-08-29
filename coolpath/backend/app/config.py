@@ -10,3 +10,7 @@ MAPBOX_TOKEN = os.getenv(
     "pk.eyJ1IjoianVuYWlkbWlyMDUxIiwiYSI6ImNtc3l0MWFwNjAzMmsyenNrbW1mMjI0aHcifQ.j8_w_jQUiv26L8QYQVSBVA"
 )
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://postgres:postgres@localhost:5432/coolpath"
+)
