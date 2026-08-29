@@ -37,6 +37,15 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+@app.get("/")
+def service_info():
+    return {
+        "service": "coolpath-backend",
+        "status": "ok",
+        "health": "/health",
+        "readiness": "/ready",
+    }
+
 @app.get("/health")
 def health_check():
     return {

@@ -9,6 +9,21 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_root_identifies_service_without_secrets():
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "service": "coolpath-backend",
+        "status": "ok",
+        "health": "/health",
+        "readiness": "/ready",
+    }
+    assert "key" not in response.text.lower()
+    assert "password" not in response.text.lower()
+    assert "postgres" not in response.text.lower()
+
+
 def test_health_remains_available():
     response = client.get("/health")
 
@@ -39,8 +54,9 @@ def test_ready_returns_safe_503_when_database_is_unavailable():
     assert secret not in response.text
 
 
-def test_ready_is_registered_at_application_root():
+def test_core_routes_are_registered_in_openapi():
     paths = client.get("/openapi.json").json()["paths"]
 
-    assert "/ready" in paths
-    assert "get" in paths["/ready"]
+    for path in ("/", "/health", "/ready"):
+        assert path in paths
+        assert "get" in paths[path]
