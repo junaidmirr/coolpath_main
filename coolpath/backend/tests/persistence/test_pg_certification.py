@@ -685,61 +685,79 @@ class TestDeterministicReplay:
 class TestPostgresSaver:
     def test_save_and_resume_checkpoint(self, pg_engine):
         """
-        Verify LangGraph PostgresSaver can save a checkpoint and resume it
+        Verify LangGraph AsyncPostgresSaver can save a checkpoint and resume it
         after completely destroying and recreating the runtime.
         """
-        from langgraph.checkpoint.postgres import PostgresSaver as PGSaver
-        from psycopg_pool import ConnectionPool
+        import asyncio
+        import selectors
+        import sys
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from psycopg.rows import dict_row
+        from psycopg_pool import AsyncConnectionPool
 
-        pool = ConnectionPool(
-            conninfo=CHECKPOINT_DATABASE_URL,
-            min_size=1,
-            max_size=3,
-            kwargs={"autocommit": True},
-        )
-        try:
-            saver = PGSaver(pool)
-            saver.setup()
-
-            thread_id = str(uuid.uuid4())
-            config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
-
-            # Create a minimal checkpoint
-            checkpoint = {
-                "v": 1,
-                "id": str(uuid.uuid4()),
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "channel_values": {"test_key": "test_value"},
-                "channel_versions": {},
-                "versions_seen": {},
-                "pending_sends": [],
-            }
-            checkpoint_metadata = {"source": "test", "step": 0, "writes": {}}
-
-            saved = saver.put(config, checkpoint, checkpoint_metadata, {})
-            assert saved is not None
-            print(f"\n  Saved checkpoint config: {saved}")
-
-            # Simulate runtime destruction: close pool and create new one
-            pool.close()
-            pool2 = ConnectionPool(
+        async def certify():
+            pool = AsyncConnectionPool(
                 conninfo=CHECKPOINT_DATABASE_URL,
                 min_size=1,
                 max_size=3,
-                kwargs={"autocommit": True},
+                open=False,
+                kwargs={
+                    "autocommit": True,
+                    "prepare_threshold": 0,
+                    "row_factory": dict_row,
+                },
             )
-            saver2 = PGSaver(pool2)
+            await pool.open(wait=True)
+            try:
+                saver = AsyncPostgresSaver(pool)
+                await saver.setup()
 
-            # Resume from the same thread_id
-            loaded = saver2.get(config)
-            assert loaded is not None
-            assert loaded["channel_values"]["test_key"] == "test_value"
-            print(f"\n  Resumed checkpoint: channel_values={loaded['channel_values']}")
+                thread_id = str(uuid.uuid4())
+                config = {
+                    "configurable": {"thread_id": thread_id, "checkpoint_ns": ""}
+                }
+                checkpoint = {
+                    "v": 1,
+                    "id": str(uuid.uuid4()),
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "channel_values": {"test_key": "test_value"},
+                    "channel_versions": {},
+                    "versions_seen": {},
+                    "pending_sends": [],
+                }
+                metadata = {"source": "test", "step": 0, "writes": {}}
 
-            pool2.close()
-        except Exception:
-            pool.close()
-            raise
+                saved = await saver.aput(config, checkpoint, metadata, {})
+                assert saved is not None
+            finally:
+                await pool.close()
+
+            pool2 = AsyncConnectionPool(
+                conninfo=CHECKPOINT_DATABASE_URL,
+                min_size=1,
+                max_size=3,
+                open=False,
+                kwargs={
+                    "autocommit": True,
+                    "prepare_threshold": 0,
+                    "row_factory": dict_row,
+                },
+            )
+            await pool2.open(wait=True)
+            try:
+                saver2 = AsyncPostgresSaver(pool2)
+                loaded = await saver2.aget(config)
+                assert loaded is not None
+                assert loaded["channel_values"]["test_key"] == "test_value"
+            finally:
+                await pool2.close()
+
+        if sys.platform == "win32":
+            loop_factory = lambda: asyncio.SelectorEventLoop(selectors.SelectSelector())
+            with asyncio.Runner(loop_factory=loop_factory) as runner:
+                runner.run(certify())
+        else:
+            asyncio.run(certify())
 
 
 # ─── 15. PRODUCTION FAILURE BEHAVIOR ─────────────────────────────────────────
@@ -747,8 +765,8 @@ class TestPostgresSaver:
 class TestProductionFailureBehavior:
     def test_production_does_not_silently_downgrade(self):
         """
-        Verify that create_checkpointer() with ENVIRONMENT=production
-        and an unreachable DATABASE_URL will hard-fail (sys.exit),
+        Verify that production checkpoint initialization with an unreachable
+        DATABASE_URL will hard-fail,
         NOT silently fall back to MemorySaver.
         """
         import subprocess
@@ -760,9 +778,13 @@ class TestProductionFailureBehavior:
             'os.environ["ENVIRONMENT"] = "production"; '
             'os.environ["DATABASE_URL"] = "postgresql://invalid"; '
             'import sys; sys.path.insert(0, "."); '
+            'import asyncio; '
+            'import psycopg_pool; '
             'from unittest.mock import patch; '
-            'patch("psycopg_pool.ConnectionPool", side_effect=Exception("Mocked DB failure")).start(); '
-            'import app.agent.graph'
+            'import langgraph.checkpoint.postgres.aio; '
+            'from app.agent.graph import agent_executor; '
+            'patch.object(psycopg_pool, "AsyncConnectionPool", side_effect=Exception("Mocked DB failure")).start(); '
+            'asyncio.run(agent_executor.initialize())'
         )
         result = subprocess.run(
             [sys.executable, "-c", script],

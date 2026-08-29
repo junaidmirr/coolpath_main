@@ -1,7 +1,9 @@
-from langgraph.graph import END, START, StateGraph
-from langgraph.checkpoint.memory import MemorySaver
+import asyncio
+import logging
 import os
-import sys
+
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
 
 from app.agent.state import CoolPathDispatchState
 from app.agent.nodes import (
@@ -21,8 +23,7 @@ from app.agent.nodes import (
     supersession_guard_node
 )
 
-# Global pool for the checkpointer
-_checkpointer_pool = None
+logger = logging.getLogger(__name__)
 
 
 def _checkpoint_connection_kwargs():
@@ -38,41 +39,52 @@ def _checkpoint_connection_kwargs():
 def _create_checkpoint_pool(connection_pool_cls, conninfo: str):
     return connection_pool_cls(
         conninfo=conninfo,
+        min_size=1,
         max_size=5,
+        open=False,
         kwargs=_checkpoint_connection_kwargs(),
     )
 
 
-def create_checkpointer():
+def _uses_postgres_checkpointer() -> bool:
+    return (
+        os.getenv("ENVIRONMENT", "local") == "production"
+        or os.getenv("USE_POSTGRES_SAVER", "false").lower() == "true"
+    )
+
+
+async def create_checkpointer():
     """
     Checkpointer factory.
     Uses MemorySaver for Phase 4 testing and local execution unless configured otherwise.
     Uses PostgresSaver in Phase 5 production, with a hard-fail if unavailable.
     """
-    env = os.getenv("ENVIRONMENT", "local")
-    
-    if env == "production" or os.getenv("USE_POSTGRES_SAVER", "false").lower() == "true":
+    if _uses_postgres_checkpointer():
+        pool = None
         try:
-            from langgraph.checkpoint.postgres import PostgresSaver
-            from psycopg_pool import ConnectionPool
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from psycopg_pool import AsyncConnectionPool
             from app.config import CHECKPOINT_DATABASE_URL
-            
-            global _checkpointer_pool
-            if _checkpointer_pool is None:
-                _checkpointer_pool = _create_checkpoint_pool(
-                    ConnectionPool,
-                    CHECKPOINT_DATABASE_URL,
-                )
-            
-            saver = PostgresSaver(_checkpointer_pool)
-            saver.setup()
-            return saver
-        except Exception as e:
-            # Hard fail in production
-            print(f"CRITICAL: Failed to initialize PostgresSaver in production: {e}")
-            sys.exit(1)
-            
-    return MemorySaver()
+
+            pool = _create_checkpoint_pool(
+                AsyncConnectionPool,
+                CHECKPOINT_DATABASE_URL,
+            )
+            await pool.open(wait=True)
+            saver = AsyncPostgresSaver(pool)
+            await saver.setup()
+            return saver, pool
+        except Exception as exc:
+            if pool is not None:
+                await pool.close()
+            logger.critical(
+                "Checkpoint initialization failed category=CHECKPOINT_FAILURE "
+                "exception_class=%s",
+                type(exc).__name__,
+            )
+            raise
+
+    return MemorySaver(), None
 
 # Initialize the StateGraph
 builder = StateGraph(CoolPathDispatchState)
@@ -122,5 +134,35 @@ builder.add_edge("select_decision", "explain")
 builder.add_edge("explain", "supersession_guard")
 builder.add_edge("supersession_guard", END)
 
-# Compile graph
-agent_executor = builder.compile(checkpointer=create_checkpointer())
+class MissionAgentExecutor:
+    def __init__(self):
+        self._graph = None
+        self._pool = None
+        self._initialize_lock = None
+
+    async def initialize(self):
+        if self._graph is not None:
+            return
+
+        if self._initialize_lock is None:
+            self._initialize_lock = asyncio.Lock()
+
+        async with self._initialize_lock:
+            if self._graph is not None:
+                return
+            checkpointer, pool = await create_checkpointer()
+            self._pool = pool
+            self._graph = builder.compile(checkpointer=checkpointer)
+
+    async def ainvoke(self, *args, **kwargs):
+        await self.initialize()
+        return await self._graph.ainvoke(*args, **kwargs)
+
+    async def close(self):
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+        self._graph = None
+
+
+agent_executor = MissionAgentExecutor()

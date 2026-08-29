@@ -233,8 +233,11 @@ async def plan_mission(req: MissionRequest):
             state,
             config={"configurable": {"thread_id": mission_id}},
         )
-    except Exception:
-        logger.error("Mission evaluation failed")
+    except Exception as exc:
+        logger.error(
+            "Mission evaluation failed subsystem=langgraph exception_class=%s",
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=503,
             detail={"status": "unavailable", "reason": "mission_evaluation_failed"},

@@ -114,6 +114,7 @@ print(captured["conninfo"])
 print(captured["kwargs"]["autocommit"])
 print(captured["kwargs"]["prepare_threshold"])
 print(captured["kwargs"]["row_factory"] is dict_row)
+print(captured["open"])
 """,
         {
             "CHECKPOINT_DATABASE_URL": "postgres://checkpoint:pass@aws-0-region.pooler.supabase.com:5432/postgres",
@@ -125,4 +126,67 @@ print(captured["kwargs"]["row_factory"] is dict_row)
         "True",
         "0",
         "True",
+        "False",
+    ]
+
+
+def test_production_checkpointer_uses_async_postgres_implementation():
+    output = _run_config_probe(
+        """
+import asyncio
+from unittest.mock import patch
+import langgraph.checkpoint.postgres.aio as postgres_aio
+import psycopg_pool
+
+from app.agent.graph import create_checkpointer
+
+captured = {}
+
+class FakePool:
+    def __init__(self, *args, **kwargs):
+        captured["pool_kwargs"] = kwargs
+
+    async def open(self, wait=False):
+        captured["opened"] = wait
+
+    async def close(self):
+        captured["closed"] = True
+
+class FakeAsyncSaver:
+    def __init__(self, pool):
+        captured["pool"] = pool
+
+    async def setup(self):
+        captured["setup"] = True
+
+async def probe():
+    with patch.object(psycopg_pool, "AsyncConnectionPool", FakePool), patch.object(
+        postgres_aio, "AsyncPostgresSaver", FakeAsyncSaver
+    ):
+        saver, pool = await create_checkpointer()
+        print(type(saver).__name__)
+        print(type(pool).__name__)
+        print(captured["opened"])
+        print(captured["setup"])
+        print(captured["pool_kwargs"]["kwargs"]["autocommit"])
+        print(captured["pool_kwargs"]["kwargs"]["prepare_threshold"])
+        print(captured["pool_kwargs"]["open"])
+        await pool.close()
+
+asyncio.run(probe())
+""",
+        {
+            "ENVIRONMENT": "production",
+            "CHECKPOINT_DATABASE_URL": "postgresql://checkpoint:pass@db.project.supabase.co:5432/postgres",
+        },
+    ).splitlines()
+
+    assert output == [
+        "FakeAsyncSaver",
+        "FakePool",
+        "True",
+        "True",
+        "True",
+        "0",
+        "False",
     ]

@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from app.config import DEMO_MODE
 
@@ -11,9 +13,20 @@ import json
 
 import os
 
+from app.agent.graph import agent_executor
 from app.api.dispatch import router as dispatch_router
 
-app = FastAPI(title="CoolPath Thermal Dispatch Gate API")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await agent_executor.initialize()
+    try:
+        yield
+    finally:
+        await agent_executor.close()
+
+
+app = FastAPI(title="CoolPath Thermal Dispatch Gate API", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
