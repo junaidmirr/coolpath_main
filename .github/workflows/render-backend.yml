@@ -46,6 +46,7 @@ jobs:
           FORTYGUARD_API_KEY: dummy
           GEOAPIFY_API_KEY: dummy
           DATABASE_POOL_MODE: transaction
+          PYTHONPATH: .
         run: pytest tests -q
 
       - name: Set up Node.js
@@ -113,6 +114,7 @@ jobs:
         working-directory: coolpath/backend
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+          PYTHONPATH: .
         run: |
           if [ -z "$MIGRATION_DATABASE_URL" ]; then
             echo "MIGRATION_DATABASE_URL secret is required."
