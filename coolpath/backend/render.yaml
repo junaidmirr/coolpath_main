@@ -3,14 +3,13 @@
 services:
   - type: web
     name: coolpath-backend
-    env: python
+    env: docker
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    preDeployCommand: alembic upgrade head
     region: oregon
     plan: free
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
-    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
       - key: DEMO_MODE
         value: "false"
       - key: FORTYGUARD_API_KEY
