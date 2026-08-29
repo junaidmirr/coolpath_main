@@ -1,15 +1,14 @@
 from pydantic import BaseModel
-from typing import Optional
-from app.models.mission import Coordinate
-from datetime import datetime
+from typing import Literal, List, Optional
 
-class Action(BaseModel):
-    route_id: str
-    departure_offset_minutes: int
-    pace: str
-    
-    # These will be populated during simulation
-    feasible: Optional[bool] = None
-    arrival_time: Optional[datetime] = None
-    thermal_load: Optional[float] = None
-    travel_time_minutes: Optional[float] = None
+class DispatchDecision(BaseModel):
+    action: Literal[
+        "DISPATCH_NOW",
+        "DELAY",
+        "REROUTE",
+        "ESCALATE"
+    ]
+    candidate_id: Optional[str] = None
+    reason_codes: List[str]
+    approval_required: bool
+    evidence_id: str
