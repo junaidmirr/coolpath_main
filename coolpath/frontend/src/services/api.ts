@@ -4,7 +4,9 @@ import type { MissionRequest, MissionResponse } from '../types/mission';
 // start.py writes the chosen backend port into coolpath/frontend/.env.local
 // before Vite boots, so this value is always correct when launched via start.sh.
 // Fallback port scan kicks in only when the frontend is started manually.
-const ENV_API_URL: string | undefined = (import.meta as any).env?.VITE_API_URL;
+const ENV_API_URL: string | undefined =
+  (import.meta as any).env?.VITE_API_BASE_URL ||
+  (import.meta as any).env?.VITE_API_URL;
 
 const CANDIDATE_PORTS = [8000, 8001, 8002, 8003, 8004, 8005, 8080, 5000];
 

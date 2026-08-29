@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from app.config import DEMO_MODE
 
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import json
@@ -40,6 +41,15 @@ def health_check():
         "status": "ok",
         "demo_mode": DEMO_MODE
     }
+
+@app.get("/ready")
+def readiness_check():
+    from app.db.database import engine
+
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+
+    return {"status": "ready"}
 
 @app.get("/api/bundle/check")
 def check_bundle_update():

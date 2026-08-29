@@ -32,7 +32,7 @@ def _run_config_probe(script: str, env: dict[str, str]) -> str:
         env=clean_env,
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=30,
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()

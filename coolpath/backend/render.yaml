@@ -1,36 +1,5 @@
-# LEGACY/FALLBACK DEPLOYMENT CONFIGURATION
-# Primary deployment is now Google Cloud Run via GitHub Actions
-services:
-  - type: web
-    name: coolpath-backend
-    env: docker
-    dockerContext: .
-    dockerfilePath: ./Dockerfile
-    preDeployCommand: alembic upgrade head
-    region: oregon
-    plan: free
-    envVars:
-      - key: DEMO_MODE
-        value: "false"
-      - key: FORTYGUARD_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: GEOAPIFY_API_KEY
-        sync: false
-      - key: LANGSMITH_API_KEY
-        sync: false
-      - key: LANGSMITH_TRACING
-        value: "true"
-      - key: LANGSMITH_PROJECT
-        value: "coolpath"
-      - key: SUPABASE_DB_URL
-        sync: false
-      - key: APP_DATABASE_URL
-        sync: false
-      - key: MIGRATION_DATABASE_URL
-        sync: false
-      - key: CHECKPOINT_DATABASE_URL
-        sync: false
-      - key: DATABASE_POOL_MODE
-        value: transaction
+# Render deployment is image-backed and bootstrapped manually in the Render
+# dashboard. GitHub Actions builds/pushes GHCR, runs Alembic, then triggers the
+# Render deploy hook with an exact SHA-tagged imgURL.
+#
+# Do not use Render source builds or Render-side migration commands for Phase 5.4.
