@@ -81,8 +81,8 @@ async def test_hero_call_counts():
     followup_state = {
         "request_id": "req_hero_2",
         "mission_id": "m_hero",
-        "current_mission_version": 2, # Note: merge_state increments version to 2
-        "evaluation_version": 2,
+        "current_mission_version": 2,
+        "evaluation_version": 3,
         "mission_patch": MissionPatch(priority="EMERGENCY")
     }
     

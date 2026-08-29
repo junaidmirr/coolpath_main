@@ -1,13 +1,12 @@
 from fastapi import FastAPI
 from app.config import DEMO_MODE
-from app.api.mission import router as mission_router
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import json
 
-app = FastAPI(title="CoolPath Mission Planner API")
+app = FastAPI(title="CoolPath Thermal Dispatch Gate API")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,5 +38,3 @@ def check_bundle_update():
         except Exception:
             pass
     return {"version": 0, "available": False}
-
-app.include_router(mission_router, prefix="/api")

@@ -58,7 +58,7 @@ def compute_real_street_candidate_routes(
     """
     Thermal-Time Multi-Objective Route Optimizer.
     Generates distinct, real-street candidate routes via Mapbox Directions API,
-    evaluates UTCI-based thermal cost per route, applies hard 1.25x detour cap.
+    evaluates TEMP_TIME_PROXY_C_MIN thermal cost per route, applies hard 1.25x detour cap.
 
     Routes generated:
       1. Direct Fastest (⚡ Fastest)
@@ -66,7 +66,6 @@ def compute_real_street_candidate_routes(
       3. Balanced Route (⚖️ Balanced) — opposite lateral corridor
       4. Side-Street Corridor (🌳 Shaded) — wider lateral offset
     """
-    from app.services.utci_model import compute_utci, normalize_utci_cost, utci_stress_category
 
     DETOUR_CAP = 1.25   # Hard limit: coolest route cannot be more than 25% slower than fastest
 
@@ -162,18 +161,18 @@ def compute_real_street_candidate_routes(
         return []
 
     # -----------------------------------------------------------------------
-    # Phase 2: UTCI-based thermal cost for every route
+    # Phase 2: TEMP_TIME_PROXY_C_MIN thermal cost for every route
     # Phase 4: Dimensionless C_heat = E_route / E_baseline (fastest route exposure)
     # -----------------------------------------------------------------------
     processed_routes = []
-    route_utci_totals: Dict[str, float] = {}
+    route_proxy_totals: Dict[str, float] = {}
 
     for r in routes_raw:
         coords = r["coordinates"]
         dur = r["duration"]
+        travel_minutes = dur / 60.0
 
         temps = []
-        utci_vals = []
         geometry_temps = []
 
         # Adaptive sampling: for long routes, sample evenly spaced points
@@ -188,19 +187,15 @@ def compute_real_street_candidate_routes(
             sample_indices = list(range(num_coords))
 
         sampled_temps = []
-        sampled_utcis = []
 
         for idx in sample_indices:
             pt = coords[idx]
             try:
                 temp, _ = provider.get_temperature_for_point(pt[0], pt[1], offset_minutes)
                 temp_f = float(temp)
-                utci_c, shade, src = compute_utci(temp_f, rh_pct=30.0, wind_ms=1.0, shade_ratio=0.0, activity=activity)
                 sampled_temps.append(temp_f)
-                sampled_utcis.append(utci_c)
             except Exception:
                 sampled_temps.append(31.5)
-                sampled_utcis.append(36.0)
 
         # Interpolate for full geometry_temps output (needed for map rendering)
         avg_sampled_temp = sum(sampled_temps) / len(sampled_temps) if sampled_temps else 31.5
@@ -216,15 +211,15 @@ def compute_real_street_candidate_routes(
             geometry_temps.append([float(pt[0]), float(pt[1]), t])
 
         temps = sampled_temps
-        utci_vals = sampled_utcis
 
         avg_temp = round(sum(temps) / len(temps), 1) if temps else 31.5
-        avg_utci = round(sum(utci_vals) / len(utci_vals), 1) if utci_vals else 36.0
-        norm_heat = normalize_utci_cost(avg_utci)
+        
+        # Operational metric calculation: average dry-bulb temperature °C * exposure minutes
+        # Disclaimer: This is an operational comparison proxy. It is not UTCI, WBGT, 
+        # a physiological heat-strain measurement, or medical safety metric.
+        temp_time_proxy_c_min = avg_temp * travel_minutes
 
-        # Raw thermal cost for comparing routes (will normalize in Phase 4 step below)
-        raw_thermal_cost = norm_heat * dur * metabolic_factor
-        route_utci_totals[r["id"]] = raw_thermal_cost
+        route_proxy_totals[r["id"]] = temp_time_proxy_c_min
 
         processed_routes.append({
             "id": r["id"],
@@ -235,18 +230,17 @@ def compute_real_street_candidate_routes(
             "geometry_temps": geometry_temps,
             "travel_time": dur,
             "walk_time": dur,
-            "thermal_cost": raw_thermal_cost,
+            "thermal_cost": temp_time_proxy_c_min,
             "avg_temp_c": avg_temp,
-            "avg_utci_c": avg_utci,
-            "utci_stress": utci_stress_category(avg_utci),
-            "normalized_heat": round(norm_heat, 3),
+            "calculated_exposure": round(temp_time_proxy_c_min, 1),
+            "unit": "TEMP_TIME_PROXY_C_MIN",
             "is_fastest": r["is_fastest"],
-            "explanation": f"{r['name']}: avg UTCI {avg_utci}°C ({utci_stress_category(avg_utci).replace('_', ' ')}), {dur/60:.1f} min."
+            "explanation": f"{r['name']}: proxy {round(temp_time_proxy_c_min, 1)} C*min ({travel_minutes:.1f} min @ {avg_temp}°C)."
         })
 
     # Phase 4: Normalize C_heat = E_route / max(E_fastest, EPSILON) (dimensionless)
     EPSILON = 1e-3
-    fastest_thermal = route_utci_totals.get("fastest", 0.0)
+    fastest_thermal = route_proxy_totals.get("fastest", 0.0)
     ref_thermal = max(float(fastest_thermal), EPSILON)
     for r in processed_routes:
         r["c_heat"] = round(r["thermal_cost"] / ref_thermal, 3)

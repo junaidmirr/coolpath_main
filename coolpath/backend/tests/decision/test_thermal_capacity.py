@@ -8,7 +8,7 @@ def test_thermal_capacity_adapter_feasible():
     policy = ThermalPolicy(
         policy_id="test-1",
         policy_version="1.0",
-        metric="utci",
+        metric="TEMP_TIME_PROXY_C_MIN",
         threshold=38.0,
         max_continuous_outdoor_minutes=60
     )
@@ -27,6 +27,8 @@ def test_thermal_capacity_adapter_feasible():
     
     feasibility = ThermalCapacityAdapter.evaluate_candidate(
         candidate_id="c-1",
+        route_id="route_1",
+        departure_offset_minutes=0.0,
         departure_at=now,
         travel_minutes=15.0,
         outdoor_minutes=45.0,
@@ -46,7 +48,7 @@ def test_thermal_capacity_adapter_exceeds_threshold():
     policy = ThermalPolicy(
         policy_id="test-1",
         policy_version="1.0",
-        metric="utci",
+        metric="TEMP_TIME_PROXY_C_MIN",
         threshold=38.0,
         max_continuous_outdoor_minutes=60
     )
@@ -65,6 +67,8 @@ def test_thermal_capacity_adapter_exceeds_threshold():
     
     feasibility = ThermalCapacityAdapter.evaluate_candidate(
         candidate_id="c-1",
+        route_id="route_1",
+        departure_offset_minutes=0.0,
         departure_at=now,
         travel_minutes=15.0,
         outdoor_minutes=45.0,
@@ -84,7 +88,7 @@ def test_thermal_capacity_adapter_misses_sla():
     policy = ThermalPolicy(
         policy_id="test-1",
         policy_version="1.0",
-        metric="utci",
+        metric="TEMP_TIME_PROXY_C_MIN",
         threshold=38.0,
         max_continuous_outdoor_minutes=60
     )
@@ -103,6 +107,8 @@ def test_thermal_capacity_adapter_misses_sla():
     
     feasibility = ThermalCapacityAdapter.evaluate_candidate(
         candidate_id="c-1",
+        route_id="route_1",
+        departure_offset_minutes=0.0,
         departure_at=now,
         travel_minutes=15.0,
         outdoor_minutes=45.0,  # 15+45 = 60 mins > 50 min SLA

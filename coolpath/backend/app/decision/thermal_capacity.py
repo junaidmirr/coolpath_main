@@ -62,7 +62,7 @@ class ThermalCapacityAdapter:
             violations.append("THERMAL_EVIDENCE_DEGRADED: Normal thermal recommendation is not supported due to degraded evidence.")
             
         if thermal_evidence.freshness_status == "EXPIRED":
-            thermal_policy_met = None
+            thermal_policy_met = False
             violations.append("EXPIRED_EVIDENCE: The thermal evidence has expired and must be refreshed.")
             
         if thermal_evidence.data_mode == "SIMULATED":
