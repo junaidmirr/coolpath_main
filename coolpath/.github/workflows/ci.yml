@@ -54,3 +54,21 @@ jobs:
     - name: Build
       working-directory: ./frontend
       run: npm run build
+
+  docker-test:
+    needs: backend-test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Docker image
+      working-directory: ./backend
+      run: docker build -t coolpath-backend:test .
+      
+    - name: Run container locally and test health
+      run: |
+        docker run -d --name test-backend -p 8080:8080 coolpath-backend:test
+        sleep 5
+        docker logs test-backend
+        curl --fail http://localhost:8080/health || (docker logs test-backend && exit 1)
+        docker stop test-backend

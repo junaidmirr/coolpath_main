@@ -1,3 +1,5 @@
+# LEGACY/FALLBACK DEPLOYMENT CONFIGURATION
+# Primary deployment is now Google Cloud Run via GitHub Actions
 services:
   - type: web
     name: coolpath-backend

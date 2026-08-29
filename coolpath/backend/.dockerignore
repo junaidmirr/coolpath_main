@@ -1,0 +1,47 @@
+# Secrets & environments
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+.github
+
+# Python caches and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+
+# Testing
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Node (just in case)
+node_modules/
+package-lock.json
+
+# Local persistence / DB
+dummy.db
+*.sqlite3
+*.db

@@ -1,0 +1,83 @@
+name: CoolPath CD
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-cloud-run:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: google-github-actions/auth@v2
+      with:
+        project_id: ${{ vars.GCP_PROJECT_ID }}
+        workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+        service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ vars.GCP_PROJECT_ID }}
+
+    - name: Docker Auth
+      run: |-
+        gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+    - name: Build Docker image
+      working-directory: ./backend
+      run: |
+        docker build -t ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/coolpath-backend:${{ github.sha }} .
+
+    - name: Push Docker image
+      run: |
+        docker push ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/coolpath-backend:${{ github.sha }}
+
+    - name: Run Alembic Migrations
+      working-directory: ./backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        # Fetch MIGRATION_DATABASE_URL from Secret Manager
+        export MIGRATION_DATABASE_URL=$(gcloud secrets versions access latest --secret="MIGRATION_DATABASE_URL")
+        alembic upgrade head
+
+    - name: Deploy to Cloud Run
+      id: deploy
+      uses: google-github-actions/deploy-cloudrun@v2
+      with:
+        service: ${{ vars.CLOUD_RUN_SERVICE }}
+        region: ${{ vars.GCP_REGION }}
+        image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/coolpath-backend:${{ github.sha }}
+        env_vars: |
+          CORS_ALLOWED_ORIGINS=https://coolpath-dispatcher.vercel.app
+          LANGSMITH_TRACING=true
+          LANGSMITH_PROJECT=coolpath
+        secrets: |
+          APP_DATABASE_URL=APP_DATABASE_URL:latest
+          CHECKPOINT_DATABASE_URL=CHECKPOINT_DATABASE_URL:latest
+          GEMINI_API_KEY=GEMINI_API_KEY:latest
+          FORTYGUARD_API_KEY=FORTYGUARD_API_KEY:latest
+          GEOAPIFY_API_KEY=GEOAPIFY_API_KEY:latest
+          LANGSMITH_API_KEY=LANGSMITH_API_KEY:latest
+        flags: '--allow-unauthenticated'
+
+    - name: Smoke Test Deployed Service
+      run: |
+        # Wait for deployment to stabilize
+        sleep 10
+        curl --fail ${{ steps.deploy.outputs.url }}/health
+        # NOTE: /ready is not tested directly here to avoid triggering expensive provider API calls without auth
