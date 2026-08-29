@@ -150,6 +150,7 @@ async def fetch_thermal_node(state: CoolPathDispatchState) -> CoolPathDispatchSt
         radius=1000,
         time=datetime.now(timezone.utc)
     )
+    mission.thermal_evidence_id = evidence.evidence_id
     state["thermal_evidence"] = evidence
     return state
 

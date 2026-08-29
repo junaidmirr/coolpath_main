@@ -1,8 +1,10 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from app.agent.nodes import fetch_thermal_node
 from app.main import app
 from app.models.action import DispatchDecision
 from app.models.evidence import ThermalEvidence
@@ -174,3 +176,19 @@ def test_parse_intent_preserves_existing_parser_contract():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "intent": parsed}
+
+
+def test_fetch_thermal_node_attaches_evidence_id_to_mission_state():
+    result = _graph_result()
+    mission = result["mission_state"]
+    evidence = result["thermal_evidence"]
+    state = {"needs_thermal": True, "mission_state": mission}
+
+    with patch(
+        "app.agent.nodes.FortyGuardThermalProviderAdapter.get_thermal_context",
+        new=AsyncMock(return_value=evidence),
+    ):
+        updated = asyncio.run(fetch_thermal_node(state))
+
+    assert updated["thermal_evidence"].evidence_id == evidence.evidence_id
+    assert updated["mission_state"].thermal_evidence_id == evidence.evidence_id
