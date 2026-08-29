@@ -3,6 +3,8 @@ from app.config import DEMO_MODE
 
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import json
@@ -46,8 +48,14 @@ def health_check():
 def readiness_check():
     from app.db.database import engine
 
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready"},
+        )
 
     return {"status": "ready"}
 
