@@ -74,14 +74,11 @@ class DecisionSelector:
         best = valid_candidates[0]
         
         # 3. Map to ACTION
-        # Need to know if it's a delay, reroute, or dispatch now.
-        # We derive delay from completion time
-        delay_minutes = max(0, (best.completion_time - base_time).total_seconds() / 60.0 - (best.travel_minutes + best.outdoor_minutes))
         
         route_id = best.route_id
         
         reasons = []
-        if delay_minutes > 0.5: # More than 30 seconds delay
+        if best.departure_offset_minutes > 0:
             action = "DELAY"
             reasons.append(ReasonCode.WITHIN_ALLOWED_DELAY)
         elif route_id != current_route_id:

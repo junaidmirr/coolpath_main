@@ -11,8 +11,6 @@ Fixes over previous version:
 """
 from abc import ABC, abstractmethod
 from typing import Tuple, List, Dict, Any, Optional
-from shapely.geometry import Point, shape
-from shapely.strtree import STRtree
 from app.services.thermal import get_temperature_for_point as synthetic_get_temp
 import httpx
 import asyncio
@@ -141,8 +139,14 @@ class FortyGuardThermalProvider(ThermalProvider):
     # ------------------------------------------------------------------
     # Spatial index builder
     # ------------------------------------------------------------------
-    def _build_spatial_index(self, features: list) -> Tuple[Optional[STRtree], List[float]]:
+    def _build_spatial_index(self, features: list) -> Tuple[Any, List[float]]:
         """Parse GeoJSON geometries into Shapely objects and build STRtree."""
+        try:
+            from shapely.geometry import Point, shape
+            from shapely.strtree import STRtree
+        except ImportError:
+            return None, []
+            
         geoms = []
         temps = []
         for feature in features:
@@ -437,12 +441,16 @@ class FortyGuardThermalProvider(ThermalProvider):
     def get_temperature_for_point(self, lng: float, lat: float, departure_offset_minutes: int) -> Tuple[float, str]:
         tree, temps = self.spatial_index.get(departure_offset_minutes, (None, []))
         if tree is not None and len(temps) > 0:
-            pt = Point(lng, lat)
-            matching = tree.query(pt, predicate="intersects")
-            if len(matching) > 0:
-                return float(temps[matching[0]]), "fortyguard"
-            n_idx = tree.nearest(pt)
-            return float(temps[n_idx]), "fortyguard_nearest"
+            try:
+                from shapely.geometry import Point
+                pt = Point(lng, lat)
+                matching = tree.query(pt, predicate="intersects")
+                if len(matching) > 0:
+                    return float(temps[matching[0]]), "fortyguard"
+                n_idx = tree.nearest(pt)
+                return float(temps[n_idx]), "fortyguard_nearest"
+            except ImportError:
+                pass
 
         # No spatial index — use coordinate-seeded urban microclimate model
         # Produces deterministic, spatially-coherent temperature variation

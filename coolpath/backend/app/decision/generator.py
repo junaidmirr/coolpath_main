@@ -42,11 +42,13 @@ class CandidateGenerator:
                 cand = MissionCandidate(
                     candidate_id=f"cand_{route.get('route_id')}_{offset}",
                     departure_at=departure_at,
+                    departure_offset_minutes=offset,
                     route_id=route.get('route_id'),
                     travel_minutes=travel_mins,
                     outdoor_minutes=float(mission_state.estimated_outdoor_minutes),
                     completion_at=completion_at,
                     calculated_thermal_exposure=exposure,
+                    unit=route.get('unit'),
                     sla_met=sla_met,
                     thermal_policy_met=True, # Placeholder, Evaluator sets this
                     violations=[],

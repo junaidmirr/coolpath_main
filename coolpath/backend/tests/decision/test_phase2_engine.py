@@ -60,13 +60,15 @@ def run_engine(base_time, mission_state, policy, evidence, routes, time_offsets,
             candidate_id=c.candidate_id,
             route_id=c.route_id,
             departure_at=c.departure_at,
+            departure_offset_minutes=c.departure_offset_minutes,
             travel_minutes=c.travel_minutes,
             outdoor_minutes=c.outdoor_minutes,
             sla_deadline=mission_state.sla_deadline,
             priority=mission_state.priority,
             thermal_policy=policy,
             thermal_evidence=evidence,
-            calculated_exposure=c.calculated_thermal_exposure
+            calculated_exposure=c.calculated_thermal_exposure,
+            unit=c.unit
         )
         feasibilities.append(f)
         

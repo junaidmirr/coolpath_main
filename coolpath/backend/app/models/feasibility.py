@@ -10,13 +10,15 @@ class MissionFeasibility(BaseModel):
 
     sla_met: bool
     thermal_policy_met: bool
-    priority_policy_met: bool
+    priority_policy_met: Optional[bool] = None
 
+    departure_offset_minutes: int
     travel_minutes: float
     outdoor_minutes: float
     completion_time: datetime
 
     calculated_exposure: Optional[float] = None
+    unit: Optional[str] = None
 
     violations: List[str]
     warnings: List[str]
