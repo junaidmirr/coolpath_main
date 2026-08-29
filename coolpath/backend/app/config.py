@@ -7,6 +7,9 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 FORTYGUARD_API_KEY = os.getenv("FORTYGUARD_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 LLM_API_KEY = os.getenv("LLM_API_KEY", GEMINI_API_KEY)
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+GOOGLE_OAUTH_TOKEN = os.getenv("GOOGLE_OAUTH_TOKEN", "")
+GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID", "avian-augury-205417")
 
 
 def _normalize_database_url(url: str) -> str:
