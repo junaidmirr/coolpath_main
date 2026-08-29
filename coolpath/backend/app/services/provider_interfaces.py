@@ -1,26 +1,19 @@
-from typing import Protocol, List, Optional
+from pydantic import BaseModel
+from typing import Protocol, List, Optional, Dict, Any
 from datetime import datetime
 
 from app.models.mission import DispatchMissionState
 from app.models.evidence import ThermalEvidence
 
-class RouteSnapshot:
+class RouteSnapshot(BaseModel):
     """
     Normalized route data returned by a RoutingProvider.
     """
-    def __init__(
-        self,
-        route_id: str,
-        travel_minutes: float,
-        calculated_exposure: dict, # offset -> exposure
-        unit: str,
-        geometry: Optional[dict] = None
-    ):
-        self.route_id = route_id
-        self.travel_minutes = travel_minutes
-        self.calculated_exposure = calculated_exposure
-        self.unit = unit
-        self.geometry = geometry
+    route_id: str
+    travel_minutes: float
+    calculated_exposure: Dict[int, float] # offset -> exposure
+    unit: str
+    geometry: Optional[Any] = None
         
 class WorkOrderProvider(Protocol):
     async def get_work_order(self, work_order_id: str) -> dict:

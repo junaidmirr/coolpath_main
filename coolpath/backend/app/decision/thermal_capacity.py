@@ -62,15 +62,16 @@ class ThermalCapacityAdapter:
             violations.append("THERMAL_EVIDENCE_DEGRADED: Normal thermal recommendation is not supported due to degraded evidence.")
             
         if thermal_evidence.freshness_status == "EXPIRED":
-            thermal_policy_met = False
-            violations.append("EXPIRED_EVIDENCE: The thermal evidence has expired and cannot be used for routing decisions.")
+            thermal_policy_met = None
+            violations.append("EXPIRED_EVIDENCE: The thermal evidence has expired and must be refreshed.")
             
         if thermal_evidence.data_mode == "SIMULATED":
             # If simulated is used in normal execution, add a warning or block based on environment.
             # We'll add a warning for now, but flag it if there's a strict production rule.
             warnings.append("SIMULATED_EVIDENCE: Demonstration mode evidence is in use.")
             
-        feasible = sla_met and thermal_policy_met and (priority_policy_met is not False)
+        # Feasible only if SLA is met, policy is strictly True, and priority is not False
+        feasible = sla_met and (thermal_policy_met is True) and (priority_policy_met is not False)
         
         return MissionFeasibility(
             candidate_id=candidate_id,

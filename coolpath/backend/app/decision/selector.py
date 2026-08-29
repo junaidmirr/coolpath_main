@@ -28,9 +28,13 @@ class DecisionSelector:
             # We must determine the reason
             reasons = [ReasonCode.NO_FEASIBLE_CANDIDATE]
             
-            # Check if it was purely a thermal policy conflict
-            thermal_conflicts = [f for f in feasibilities if not f.thermal_policy_met]
-            if len(thermal_conflicts) == len(feasibilities) and len(feasibilities) > 0:
+            # Check if it was purely a thermal policy conflict or missing evidence
+            missing_evidence = [f for f in feasibilities if f.thermal_policy_met is None]
+            thermal_conflicts = [f for f in feasibilities if f.thermal_policy_met is False]
+            
+            if len(missing_evidence) == len(feasibilities) and len(feasibilities) > 0:
+                reasons.append(ReasonCode.REQUIRED_THERMAL_EVIDENCE_UNAVAILABLE)
+            elif len(thermal_conflicts) == len(feasibilities) and len(feasibilities) > 0:
                 reasons.append(ReasonCode.NO_POLICY_COMPLIANT_PLAN)
                 
             if mission_state.priority == "EMERGENCY":

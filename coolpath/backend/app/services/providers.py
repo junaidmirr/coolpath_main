@@ -122,7 +122,9 @@ class OSMnxRoutingProviderAdapter:
             calculated_exposure = {}
             for offset in time_offsets:
                 # We use the raw average temperature (in °C) times duration (in minutes)
-                # to get a genuine C*min metric, without inventing missing UTCI variables.
+                # to get a genuine C*min metric.
+                # NOTE: TEMP_TIME_PROXY_C_MIN is a calculated operational comparison metric, 
+                # not a physiological heat-stress measurement (it is not UTCI or WBGT).
                 base_temp_c = r.get("avg_temp_c", 36.0)
                 # Apply a slight cooling for future offsets as a basic forecast proxy
                 temp_at_offset = base_temp_c - (offset * 0.033)
@@ -132,7 +134,7 @@ class OSMnxRoutingProviderAdapter:
                 route_id=route_id,
                 travel_minutes=travel_mins,
                 calculated_exposure=calculated_exposure,
-                unit="C_MIN",
+                unit="TEMP_TIME_PROXY_C_MIN",
                 geometry=r.get("geometry")
             ))
             

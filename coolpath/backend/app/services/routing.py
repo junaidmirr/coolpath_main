@@ -24,7 +24,8 @@ _THERMAL_SAMPLE_MAX_POINTS = 60
 def _fetch_mapbox_directions(waypoints: List[Tuple[float, float]], profile: str = "walking") -> Dict[str, Any]:
     """
     Fetches real-street turn-by-turn road geometries from Mapbox Directions API.
-    Follows actual avenues, streets, pedestrian crossings, and park paths.
+    This serves as the primary source of truth for real-world connectivity,
+    following actual avenues, streets, pedestrian crossings, and park paths.
     """
     token = MAPBOX_TOKEN or "pk.eyJ1IjoianVuYWlkbWlyMDUxIiwiYSI6ImNtc3l0MWFwNjAzMmsyenNrbW1mMjI0aHcifQ.j8_w_jQUiv26L8QYQVSBVA"
     wp_str = ";".join([f"{lng:.6f},{lat:.6f}" for lng, lat in waypoints])
@@ -256,11 +257,12 @@ def compute_real_street_candidate_routes(
 
 def get_candidate_routes(G: nx.DiGraph, origin_node, dest_node, max_alternatives=4) -> List[Dict[str, Any]]:
     """
-    Phase 5 Fix: Graph-based Thermal-Time Multi-Objective Route Generation.
+    Graph-based Thermal-Time Multi-Objective Route Generation.
     
     Generates alternative routes by re-weighting graph edges with different
     thermal alpha values and running Dijkstra/NetworkX shortest-path per alpha.
-    Every edge is guaranteed to exist in the actual OSM/NetworkX graph.
+    Every edge is guaranteed to exist in the actual OSM/NetworkX graph,
+    serving as the local graph-based source of truth when Mapbox is unavailable.
     
     Alpha values control the tradeoff:
       α=0:   Pure fastest (time-only)

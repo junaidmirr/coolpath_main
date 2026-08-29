@@ -33,7 +33,7 @@ def setup_fixtures(priority="NORMAL", sla_offset_mins=120):
     policy = ThermalPolicy(
         policy_id="p1",
         policy_version="v1",
-        metric="C_MIN",
+        metric="TEMP_TIME_PROXY_C_MIN",
         threshold=38.0,
         max_continuous_outdoor_minutes=60
     )
@@ -43,7 +43,7 @@ def setup_fixtures(priority="NORMAL", sla_offset_mins=120):
         provider="fortyguard",
         requested_at=base_time,
         data_mode="LIVE",
-        unit="C_MIN",
+        unit="TEMP_TIME_PROXY_C_MIN",
         freshness_seconds=60,
         freshness_status="FRESH"
     )
@@ -200,7 +200,7 @@ def test_12_mission_version():
 
 def test_13_metric_mismatch():
     base_time, state, policy, ev = setup_fixtures()
-    policy.metric = "C_MIN"
+    policy.metric = "TEMP_TIME_PROXY_C_MIN"
     # Provide candidate with wrong unit
     routes = [{"route_id": "route_A", "travel_minutes": 15, "unit": "TEMPERATURE_C", "calculated_exposure": {0: 35.0}}]
     decision = run_engine(base_time, state, policy, ev, routes, [0])

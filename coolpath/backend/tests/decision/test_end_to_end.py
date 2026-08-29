@@ -97,7 +97,7 @@ async def test_end_to_end_decision():
     policy = ThermalPolicy(
         policy_id="p1",
         policy_version="v1",
-        metric="C_MIN",
+        metric="TEMP_TIME_PROXY_C_MIN",
         threshold=1000.0,
         max_continuous_outdoor_minutes=60
     )
