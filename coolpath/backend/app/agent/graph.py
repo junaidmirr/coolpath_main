@@ -24,6 +24,25 @@ from app.agent.nodes import (
 # Global pool for the checkpointer
 _checkpointer_pool = None
 
+
+def _checkpoint_connection_kwargs():
+    from psycopg.rows import dict_row
+
+    return {
+        "autocommit": True,
+        "prepare_threshold": 0,
+        "row_factory": dict_row,
+    }
+
+
+def _create_checkpoint_pool(connection_pool_cls, conninfo: str):
+    return connection_pool_cls(
+        conninfo=conninfo,
+        max_size=5,
+        kwargs=_checkpoint_connection_kwargs(),
+    )
+
+
 def create_checkpointer():
     """
     Checkpointer factory.
@@ -36,14 +55,13 @@ def create_checkpointer():
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
             from psycopg_pool import ConnectionPool
-            from app.config import DATABASE_URL
+            from app.config import CHECKPOINT_DATABASE_URL
             
             global _checkpointer_pool
             if _checkpointer_pool is None:
-                _checkpointer_pool = ConnectionPool(
-                    conninfo=DATABASE_URL,
-                    max_size=5,
-                    kwargs={"autocommit": True}
+                _checkpointer_pool = _create_checkpoint_pool(
+                    ConnectionPool,
+                    CHECKPOINT_DATABASE_URL,
                 )
             
             saver = PostgresSaver(_checkpointer_pool)

@@ -8,42 +8,61 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import networkx as nx
 
 from app.models.mission import Coordinate
-from app.config import MAPBOX_TOKEN
 
 logger = logging.getLogger(__name__)
 
 # SSL context for robust HTTPS requests
 _SSL_CTX = ssl._create_unverified_context()
 
-# Thread pool for parallel Mapbox API calls
-_MAPBOX_POOL = ThreadPoolExecutor(max_workers=4)
+# Thread pool for parallel Geoapify API calls
+_GEOAPIFY_POOL = ThreadPoolExecutor(max_workers=4)
 
 # Geometry sampling: evaluate thermal cost at every Nth point for long routes
 _THERMAL_SAMPLE_MAX_POINTS = 60
 
-def _fetch_mapbox_directions(waypoints: List[Tuple[float, float]], profile: str = "walking") -> Dict[str, Any]:
+def _fetch_geoapify_directions(waypoints: List[Tuple[float, float]], profile: str = "walking") -> Dict[str, Any]:
     """
-    Fetches real-street turn-by-turn road geometries from Mapbox Directions API.
-    This serves as the primary source of truth for real-world connectivity,
-    following actual avenues, streets, pedestrian crossings, and park paths.
+    Fetches real-street turn-by-turn road geometries from Geoapify Routing API.
+    This serves as the primary source of truth for real-world connectivity.
     """
-    token = MAPBOX_TOKEN or "pk.eyJ1IjoianVuYWlkbWlyMDUxIiwiYSI6ImNtc3l0MWFwNjAzMmsyenNrbW1mMjI0aHcifQ.j8_w_jQUiv26L8QYQVSBVA"
-    wp_str = ";".join([f"{lng:.6f},{lat:.6f}" for lng, lat in waypoints])
-    url = f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{wp_str}?geometries=geojson&overview=full&steps=false&access_token={token}"
+    import os
+    token = os.getenv("GEOAPIFY_API_KEY", "")
+    # Geoapify waypoints format: lat,lon|lat,lon
+    wp_str = "%7C".join([f"{lat:.6f}%2C{lng:.6f}" for lng, lat in waypoints])
+    
+    # Map profiles
+    geoapify_mode = "drive"
+    if profile in ["walking", "pedestrian"]:
+        geoapify_mode = "walk"
+    elif profile in ["cycling", "biking"]:
+        geoapify_mode = "bicycle"
+
+    url = f"https://api.geoapify.com/v1/routing?waypoints={wp_str}&mode={geoapify_mode}&apiKey={token}"
     
     req = urllib.request.Request(url, headers={"User-Agent": "CoolPath-RealStreet/1.0"})
     try:
         with urllib.request.urlopen(req, context=_SSL_CTX, timeout=8) as resp:
             data = json.loads(resp.read().decode())
-            if data.get("routes"):
-                r = data["routes"][0]
+            if data.get("features") and len(data["features"]) > 0:
+                f = data["features"][0]
+                props = f.get("properties", {})
+                
+                # Geometry is in GeoJSON format (LineString/MultiLineString)
+                geometry = f.get("geometry", {})
+                coords = []
+                if geometry.get("type") == "LineString":
+                    coords = geometry.get("coordinates", [])
+                elif geometry.get("type") == "MultiLineString":
+                    for line in geometry.get("coordinates", []):
+                        coords.extend(line)
+
                 return {
-                    "coordinates": r["geometry"]["coordinates"],
-                    "distance": float(r["distance"]),
-                    "duration": float(r["duration"])
+                    "coordinates": coords,
+                    "distance": float(props.get("distance", 0)),
+                    "duration": float(props.get("time", 0))
                 }
     except Exception as e:
-        logger.warning(f"Mapbox Directions query failed: {e}")
+        logger.warning(f"Geoapify Directions query failed: {e}")
         
     return None
 
@@ -57,7 +76,7 @@ def compute_real_street_candidate_routes(
 ) -> List[Dict[str, Any]]:
     """
     Thermal-Time Multi-Objective Route Optimizer.
-    Generates distinct, real-street candidate routes via Mapbox Directions API,
+    Generates distinct, real-street candidate routes via Geoapify Routing API,
     evaluates TEMP_TIME_PROXY_C_MIN thermal cost per route, applies hard 1.25x detour cap.
 
     Routes generated:
@@ -104,11 +123,11 @@ def compute_real_street_candidate_routes(
         wp = (mid_lng + perp_lng, mid_lat + perp_lat)
         fetch_jobs.append((name, [(origin.lng, origin.lat), wp, (destination.lng, destination.lat)]))
 
-    # Fetch all routes in parallel (4 concurrent Mapbox API calls)
+    # Fetch all routes in parallel (4 concurrent Geoapify API calls)
     fetch_results = {}
     futures = {}
     for job_key, waypoints in fetch_jobs:
-        future = _MAPBOX_POOL.submit(_fetch_mapbox_directions, waypoints, mb_profile)
+        future = _GEOAPIFY_POOL.submit(_fetch_geoapify_directions, waypoints, mb_profile)
         futures[future] = job_key
 
     for future in as_completed(futures):
@@ -256,7 +275,7 @@ def get_candidate_routes(G: nx.DiGraph, origin_node, dest_node, max_alternatives
     Generates alternative routes by re-weighting graph edges with different
     thermal alpha values and running Dijkstra/NetworkX shortest-path per alpha.
     Every edge is guaranteed to exist in the actual OSM/NetworkX graph,
-    serving as the local graph-based source of truth when Mapbox is unavailable.
+    serving as the local graph-based source of truth when Geoapify is unavailable.
     
     Alpha values control the tradeoff:
       α=0:   Pure fastest (time-only)

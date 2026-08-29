@@ -13,14 +13,15 @@ sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..'
 # Import Base and models
 from app.db.database import Base
 from app.db.models import *
-from app.config import DATABASE_URL
+from app.config import MIGRATION_DATABASE_URL
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
-# Overwrite sqlalchemy.url with the one from our app config
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# Alembic stores this in ConfigParser, where percent-encoded passwords must
+# escape "%" to avoid interpolation parsing.
+config.set_main_option("sqlalchemy.url", MIGRATION_DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

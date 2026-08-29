@@ -277,7 +277,12 @@ def supersession_guard_node(state: CoolPathDispatchState) -> CoolPathDispatchSta
         from app.services.mission_version_store import PostgresMissionVersionStore
         db = next(get_db())
         store = PostgresMissionVersionStore(db)
-        is_superseded = store.is_superseded(state.get("mission_id"), eval_version)
+        latest_version = store.get_latest_version(state.get("mission_id"))
+        is_superseded = (
+            (eval_version != curr_version)
+            if latest_version is None
+            else latest_version > eval_version
+        )
     except Exception as e:
         # Fallback to local memory state during tests where DB isn't initialized
         is_superseded = (eval_version != curr_version)
