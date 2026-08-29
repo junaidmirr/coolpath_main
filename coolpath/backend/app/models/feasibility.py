@@ -4,6 +4,7 @@ from typing import Optional, List
 
 class MissionFeasibility(BaseModel):
     candidate_id: str
+    route_id: str
 
     feasible: bool
 

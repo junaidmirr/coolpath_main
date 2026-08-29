@@ -14,6 +14,7 @@ class ThermalCapacityAdapter:
     @staticmethod
     def evaluate_candidate(
         candidate_id: str,
+        route_id: str,
         departure_at: datetime,
         travel_minutes: float,
         outdoor_minutes: float,
@@ -52,6 +53,7 @@ class ThermalCapacityAdapter:
         
         return MissionFeasibility(
             candidate_id=candidate_id,
+            route_id=route_id,
             feasible=feasible,
             sla_met=sla_met,
             thermal_policy_met=thermal_policy_met,

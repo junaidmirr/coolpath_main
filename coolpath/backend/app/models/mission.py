@@ -8,6 +8,7 @@ class Coordinate(BaseModel):
 
 class DispatchMissionState(BaseModel):
     session_id: str
+    mission_version: int = 1
 
     work_order_id: str
     task_type: str
