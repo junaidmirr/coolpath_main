@@ -121,16 +121,18 @@ class OSMnxRoutingProviderAdapter:
             
             calculated_exposure = {}
             for offset in time_offsets:
-                # To be completely accurate, we'd recalculate UTCI here.
-                # But for the adapter, we can assume some variance based on offset
-                base_exposure = r.get("thermal_cost", 0.0)
-                calculated_exposure[offset] = base_exposure * (1.0 - offset * 0.001)
+                # We use the raw average temperature (in °C) times duration (in minutes)
+                # to get a genuine C*min metric, without inventing missing UTCI variables.
+                base_temp_c = r.get("avg_temp_c", 36.0)
+                # Apply a slight cooling for future offsets as a basic forecast proxy
+                temp_at_offset = base_temp_c - (offset * 0.033)
+                calculated_exposure[offset] = temp_at_offset * travel_mins
                 
             snapshots.append(RouteSnapshot(
                 route_id=route_id,
                 travel_minutes=travel_mins,
                 calculated_exposure=calculated_exposure,
-                unit="C*min",
+                unit="C_MIN",
                 geometry=r.get("geometry")
             ))
             

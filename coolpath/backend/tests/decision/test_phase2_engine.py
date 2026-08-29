@@ -33,7 +33,7 @@ def setup_fixtures(priority="NORMAL", sla_offset_mins=120):
     policy = ThermalPolicy(
         policy_id="p1",
         policy_version="v1",
-        metric="utci",
+        metric="C_MIN",
         threshold=38.0,
         max_continuous_outdoor_minutes=60
     )
@@ -43,8 +43,9 @@ def setup_fixtures(priority="NORMAL", sla_offset_mins=120):
         provider="fortyguard",
         requested_at=base_time,
         data_mode="LIVE",
-        unit="C",
-        freshness_seconds=60
+        unit="C_MIN",
+        freshness_seconds=60,
+        freshness_status="FRESH"
     )
     
     return base_time, mission_state, policy, evidence
@@ -196,3 +197,31 @@ def test_12_mission_version():
     routes = [{"route_id": "route_A", "travel_minutes": 15, "calculated_exposure": {0: 35.0}}]
     decision = run_engine(base_time, state, policy, ev, routes, [0])
     assert decision.mission_version == 2
+
+def test_13_metric_mismatch():
+    base_time, state, policy, ev = setup_fixtures()
+    policy.metric = "C_MIN"
+    # Provide candidate with wrong unit
+    routes = [{"route_id": "route_A", "travel_minutes": 15, "unit": "TEMPERATURE_C", "calculated_exposure": {0: 35.0}}]
+    decision = run_engine(base_time, state, policy, ev, routes, [0])
+    
+    assert decision.action == "ESCALATE"
+    assert ReasonCode.NO_POLICY_COMPLIANT_PLAN in decision.reason_codes
+
+def test_14_degraded_evidence():
+    base_time, state, policy, ev = setup_fixtures()
+    ev.data_mode = "DEGRADED"
+    routes = [{"route_id": "route_A", "travel_minutes": 15, "calculated_exposure": {0: 35.0}}]
+    decision = run_engine(base_time, state, policy, ev, routes, [0])
+    
+    assert decision.action == "ESCALATE"
+    assert ReasonCode.NO_POLICY_COMPLIANT_PLAN in decision.reason_codes
+
+def test_15_expired_evidence():
+    base_time, state, policy, ev = setup_fixtures()
+    ev.freshness_status = "EXPIRED"
+    routes = [{"route_id": "route_A", "travel_minutes": 15, "calculated_exposure": {0: 35.0}}]
+    decision = run_engine(base_time, state, policy, ev, routes, [0])
+    
+    assert decision.action == "ESCALATE"
+    assert ReasonCode.NO_POLICY_COMPLIANT_PLAN in decision.reason_codes

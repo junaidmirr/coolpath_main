@@ -47,21 +47,29 @@ class ThermalCapacityAdapter:
                 violations.append(f"Outdoor duration ({outdoor_minutes}m) exceeds policy maximum ({thermal_policy.max_continuous_outdoor_minutes}m).")
                 
         if thermal_policy.threshold is not None and calculated_exposure is not None:
-            # Unit check
-            if unit and thermal_policy.metric.lower() not in unit.lower():
-                # Just a basic safe check. E.g. metric="utci", unit="C". We should probably have a strict mapping.
-                # The user wrote: "A raw temperature threshold in °C must never be blindly compared with a cumulative metric such as °C·minutes."
-                if "min" in unit.lower() and "min" not in thermal_policy.metric.lower():
-                    thermal_policy_met = False
-                    violations.append(f"Unit mismatch: candidate unit {unit} cannot be compared to policy metric {thermal_policy.metric}")
-                elif calculated_exposure > thermal_policy.threshold:
-                    thermal_policy_met = False
-                    violations.append(f"Calculated exposure ({calculated_exposure}) exceeds policy threshold ({thermal_policy.threshold}).")
+            # Metric/Unit strict check
+            if unit and thermal_policy.metric.lower() != unit.lower():
+                thermal_policy_met = False
+                violations.append(f"Metric mismatch: candidate metric '{unit}' cannot be evaluated against policy metric '{thermal_policy.metric}'.")
             else:
                 if calculated_exposure > thermal_policy.threshold:
                     thermal_policy_met = False
                     violations.append(f"Calculated exposure ({calculated_exposure}) exceeds policy threshold ({thermal_policy.threshold}).")
-                
+                    
+        # 4. Evidence Mode & Freshness check
+        if thermal_evidence.data_mode == "DEGRADED":
+            thermal_policy_met = False
+            violations.append("THERMAL_EVIDENCE_DEGRADED: Normal thermal recommendation is not supported due to degraded evidence.")
+            
+        if thermal_evidence.freshness_status == "EXPIRED":
+            thermal_policy_met = False
+            violations.append("EXPIRED_EVIDENCE: The thermal evidence has expired and cannot be used for routing decisions.")
+            
+        if thermal_evidence.data_mode == "SIMULATED":
+            # If simulated is used in normal execution, add a warning or block based on environment.
+            # We'll add a warning for now, but flag it if there's a strict production rule.
+            warnings.append("SIMULATED_EVIDENCE: Demonstration mode evidence is in use.")
+            
         feasible = sla_met and thermal_policy_met and (priority_policy_met is not False)
         
         return MissionFeasibility(

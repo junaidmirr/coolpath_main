@@ -15,6 +15,7 @@ class ThermalEvidence(BaseModel):
         "LIVE",
         "CACHED",
         "FALLBACK",
+        "SIMULATED",
         "DEGRADED"
     ]
 
@@ -22,6 +23,7 @@ class ThermalEvidence(BaseModel):
     metric: str = "tcm"
     unit: str
     freshness_seconds: int
+    freshness_status: Literal["FRESH", "STALE_ALLOWED", "EXPIRED"] = "FRESH"
     activity_id: Optional[str] = None
     coverage_status: Optional[str] = None
     warnings: List[str] = []
