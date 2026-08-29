@@ -47,7 +47,7 @@ jobs:
           GEOAPIFY_API_KEY: dummy
           DATABASE_POOL_MODE: transaction
           PYTHONPATH: .
-        run: pytest tests -q
+        run: python -m pytest tests -q
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
