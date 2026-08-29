@@ -57,3 +57,4 @@ class CoolPathDispatchState(TypedDict, total=False):
     # Observability
     pipeline_events: List[PipelineEvent]
     is_superseded: bool
+    defer_persistence: bool

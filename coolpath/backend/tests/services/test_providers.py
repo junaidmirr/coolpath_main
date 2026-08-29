@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Mock heavy dependencies missing in this lightweight test environment
 sys.modules['shapely'] = MagicMock()
@@ -54,16 +54,19 @@ async def test_providers(anyio_backend):
     
     assert evidence.provider == "fortyguard"
     assert evidence.data_mode in ["LIVE", "CACHED", "FALLBACK", "DEGRADED"]
-    assert evidence.metric == "tcm"
+    assert evidence.metric == "TEMP_TIME_PROXY_C_MIN"
     
     routing_adapter = OSMnxRoutingProviderAdapter(thermal_provider=thermal_adapter)
+    thermal_adapter.underlying.prepare_environment = AsyncMock()
     
     snapshots = await routing_adapter.get_routes(
         origin={"lat": 40.71, "lng": -74.01},
         destination={"lat": 40.72, "lng": -74.00},
         time_offsets=[0, 15, 30],
-        thermal_evidence=evidence
+        thermal_evidence=evidence,
+        activity="walking",
     )
     
     assert isinstance(snapshots, list)
+    thermal_adapter.underlying.prepare_environment.assert_called_once()
     # The real Mapbox call might fail depending on token, but let's just see if it doesn't crash

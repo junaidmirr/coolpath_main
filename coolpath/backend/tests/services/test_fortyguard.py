@@ -83,10 +83,12 @@ async def test_fortyguard_failure_fallback():
     with patch("httpx.AsyncClient.post", side_effect=mock_post):
         with patch("app.services.thermal_provider.FORTYGUARD_API_KEY", "fake_key"):
             with patch("app.services.thermal_provider._compute_cache_key", return_value="test_key_2"):
-                await provider.prepare_environment(Coordinate(40.7, -74.0), Coordinate(40.71, -74.01), [0])
+                with patch.object(provider, "_scan_cache_for_spatial_overlap", return_value=[]):
+                    await provider.prepare_environment(Coordinate(40.7, -74.0), Coordinate(40.71, -74.01), [0])
                 
     # No features loaded, should fallback
     assert provider.heatmap_features.get(0, []) == []
+    assert provider.get_environmental_summary()["data_source"] == "microclimate_model"
 
 @pytest.mark.parametrize("status_code", [401, 403, 404, 429, 500, 503])
 @pytest.mark.anyio
@@ -108,7 +110,8 @@ async def test_fortyguard_failure_matrix(status_code):
     with patch("httpx.AsyncClient.post", side_effect=mock_post):
         with patch("app.services.thermal_provider.FORTYGUARD_API_KEY", "fake_key"):
             with patch("app.services.thermal_provider._compute_cache_key", return_value=f"test_key_{status_code}"):
-                await provider.prepare_environment(Coordinate(40.7, -74.0), Coordinate(40.71, -74.01), [0])
+                with patch.object(provider, "_scan_cache_for_spatial_overlap", return_value=[]):
+                    await provider.prepare_environment(Coordinate(40.7, -74.0), Coordinate(40.71, -74.01), [0])
                 
     assert provider.heatmap_features.get(0, []) == []
 
@@ -123,7 +126,8 @@ async def test_fortyguard_timeout():
     with patch("httpx.AsyncClient.post", side_effect=mock_post):
         with patch("app.services.thermal_provider.FORTYGUARD_API_KEY", "fake_key"):
             with patch("app.services.thermal_provider._compute_cache_key", return_value="test_key_timeout"):
-                await provider.prepare_environment(Coordinate(40.7, -74.0), Coordinate(40.71, -74.01), [0])
+                with patch.object(provider, "_scan_cache_for_spatial_overlap", return_value=[]):
+                    await provider.prepare_environment(Coordinate(40.7, -74.0), Coordinate(40.71, -74.01), [0])
                 
     assert provider.heatmap_features.get(0, []) == []
 
@@ -145,6 +149,7 @@ async def test_fortyguard_malformed_response():
     with patch("httpx.AsyncClient.post", side_effect=mock_post):
         with patch("app.services.thermal_provider.FORTYGUARD_API_KEY", "fake_key"):
             with patch("app.services.thermal_provider._compute_cache_key", return_value="test_key_malformed"):
-                await provider.prepare_environment(Coordinate(40.7, -74.0), Coordinate(40.71, -74.01), [0])
+                with patch.object(provider, "_scan_cache_for_spatial_overlap", return_value=[]):
+                    await provider.prepare_environment(Coordinate(40.7, -74.0), Coordinate(40.71, -74.01), [0])
                 
     assert provider.heatmap_features.get(0, []) == []

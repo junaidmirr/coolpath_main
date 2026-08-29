@@ -60,13 +60,16 @@ class FortyGuardThermalProviderAdapter:
         env_summary = self.underlying.get_environmental_summary()
         data_source = env_summary.get("data_source", "microclimate_model")
         
-        data_mode = "LIVE"
+        data_mode = "DEGRADED"
         coverage_status = "OK"
-        if data_source == "static_phoenix_fallback":
+        if data_source == "fortyguard_live":
+            data_mode = "LIVE"
+        elif data_source == "fortyguard_cached":
+            data_mode = "CACHED"
+        elif data_source == "static_phoenix_fallback":
             data_mode = "FALLBACK"
             coverage_status = "FALLBACK_DATA_USED"
-        elif data_source == "microclimate_model":
-            data_mode = "DEGRADED"
+        else:
             coverage_status = "SYNTHETIC"
             
         evidence = ThermalEvidence(
@@ -74,8 +77,8 @@ class FortyGuardThermalProviderAdapter:
             provider="fortyguard",
             requested_at=datetime.now(timezone.utc),
             data_mode=data_mode,
-            metric="tcm",
-            unit="C",
+            metric="TEMP_TIME_PROXY_C_MIN",
+            unit="TEMP_TIME_PROXY_C_MIN",
             freshness_seconds=0, 
             coverage_status=coverage_status
         )
@@ -90,7 +93,8 @@ class OSMnxRoutingProviderAdapter:
         origin: dict, 
         destination: dict, 
         time_offsets: List[int],
-        thermal_evidence: ThermalEvidence
+        thermal_evidence: ThermalEvidence,
+        activity: str = "walking",
     ) -> List[RouteSnapshot]:
         # We need a Coordinate-like object for the routing functions
         class Coordinate:
@@ -100,6 +104,14 @@ class OSMnxRoutingProviderAdapter:
                 
         o = Coordinate(origin["lat"], origin["lng"])
         d = Coordinate(destination["lat"], destination["lng"])
+
+        # Route scoring reads from the provider's prepared spatial index. This
+        # call is usually a RAM/disk cache hit when evidence was fetched first.
+        await self.thermal_provider.underlying.prepare_environment(
+            o,
+            d,
+            time_offsets,
+        )
         
         # We loop over time offsets to fetch routes for each offset? 
         # Actually, Phase 3 specifies that RoutingProvider returns RouteSnapshot
@@ -109,7 +121,7 @@ class OSMnxRoutingProviderAdapter:
         routes_raw = compute_real_street_candidate_routes(
             origin=o, 
             destination=d, 
-            activity="walking", 
+                activity=activity,
             provider=self.thermal_provider.underlying, 
             offset_minutes=0
         )

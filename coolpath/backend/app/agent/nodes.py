@@ -131,7 +131,8 @@ async def fetch_routes_node(state: CoolPathDispatchState) -> CoolPathDispatchSta
         origin_dict,
         dest_dict,
         time_offsets=[0, 15, 30, 45, 60],
-        thermal_evidence=state.get("thermal_evidence")
+        thermal_evidence=state.get("thermal_evidence"),
+        activity=mission.task_type,
     )
     state["route_snapshots"] = snapshots
     return state
@@ -226,6 +227,12 @@ def select_decision_node(state: CoolPathDispatchState) -> CoolPathDispatchState:
         current_route_id="fastest"
     )
     state["selected_decision"] = decision
+
+    # HTTP requests persist the complete mission/evidence/decision aggregate in
+    # one transaction after the graph succeeds. Direct graph users retain the
+    # existing best-effort persistence behavior.
+    if state.get("defer_persistence"):
+        return state
     
     # Phase 5: Persist the decision
     try:

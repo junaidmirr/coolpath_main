@@ -135,6 +135,7 @@ class FortyGuardThermalProvider(ThermalProvider):
         self.heatmap_features: Dict[int, list] = {}
         self.spatial_index: Dict[int, Tuple[Optional[STRtree], List[float]]] = {}
         self._using_fallback: bool = False
+        self._data_source: str = "microclimate_model"
 
     # ------------------------------------------------------------------
     # Spatial index builder
@@ -285,10 +286,12 @@ class FortyGuardThermalProvider(ThermalProvider):
         cache_file = CACHE_DIR / f"heatmap_{cache_key[:16]}.json"
 
         features: list = []
+        data_source = "microclimate_model"
 
         # L1 — RAM cache (exact bbox+time match for THIS location)
         if cache_key in _GLOBAL_RAM_CACHE:
             features = _GLOBAL_RAM_CACHE[cache_key]
+            data_source = "fortyguard_cached"
             logger.info(f"[L1 RAM HIT] {len(features)} tiles for this location (0 credits).")
 
         # L2 — Disk cache (exact bbox+time match for THIS location)
@@ -297,6 +300,7 @@ class FortyGuardThermalProvider(ThermalProvider):
                 with open(cache_file, "r") as f:
                     features = json.load(f)
                 _GLOBAL_RAM_CACHE[cache_key] = features
+                data_source = "fortyguard_cached"
                 logger.info(f"[L2 DISK HIT] {len(features)} tiles from {cache_file.name}.")
             except Exception as e:
                 logger.warning(f"[L2 DISK] Read error: {e}")
@@ -307,6 +311,7 @@ class FortyGuardThermalProvider(ThermalProvider):
             features = self._scan_cache_for_spatial_overlap(rounded_bbox)
             if features:
                 _GLOBAL_RAM_CACHE[cache_key] = features
+                data_source = "fortyguard_cached"
                 logger.info(f"[L3 SPATIAL HIT] {len(features)} tiles from nearby cache for this region.")
 
         # L4 — Live FortyGuard API: fetch heatmap for THIS specific location
@@ -315,6 +320,7 @@ class FortyGuardThermalProvider(ThermalProvider):
             features = await self._fetch_from_api(rounded_bbox, now_utc)
 
             if features:
+                data_source = "fortyguard_live"
                 try:
                     with open(cache_file, "w") as f:
                         json.dump(features, f, separators=(",", ":"))
@@ -328,6 +334,7 @@ class FortyGuardThermalProvider(ThermalProvider):
         if not features:
             logger.info("[FALLBACK] No FortyGuard data for this location. Using microclimate estimation model.")
 
+        self._data_source = data_source
         self._apply_features(features, offsets)
 
     async def _fetch_from_api(self, rounded_bbox: dict, now_utc) -> list:
@@ -518,7 +525,7 @@ class FortyGuardThermalProvider(ThermalProvider):
             "ghi_solar_w_m2": 900 if mean_temp > 38 else 600,
             "air_quality_level": "Good (AQI 42)",
             "solar_status": "Peak Solar Irradiance" if mean_temp > 38 else "Moderate Solar Load",
-            "data_source": "static_phoenix_fallback" if using_fallback else "fortyguard_live",
+            "data_source": "static_phoenix_fallback" if using_fallback else self._data_source,
             "tile_count": sum(len(v) for v in self.heatmap_features.values()),
             "mean_surface_temp_c": mean_temp,
         }

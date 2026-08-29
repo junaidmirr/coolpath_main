@@ -11,6 +11,8 @@ import json
 
 import os
 
+from app.api.dispatch import router as dispatch_router
+
 app = FastAPI(title="CoolPath Thermal Dispatch Gate API")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -36,6 +38,7 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.include_router(dispatch_router, prefix="/api")
 
 @app.get("/")
 def service_info():

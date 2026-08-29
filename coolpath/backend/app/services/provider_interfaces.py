@@ -38,6 +38,7 @@ class RoutingProvider(Protocol):
         origin: dict, 
         destination: dict, 
         time_offsets: List[int],
-        thermal_evidence: ThermalEvidence
+        thermal_evidence: ThermalEvidence,
+        activity: str = "walking",
     ) -> List[RouteSnapshot]:
         ...
