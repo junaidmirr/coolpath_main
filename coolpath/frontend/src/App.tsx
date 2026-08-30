@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, Database, MapPin, Navigation, ShieldCheck, ThermometerSun } from 'lucide-react';
 import Map, { type PinMode } from './components/Map';
 import LocationSearch, { type GeoResult } from './components/LocationSearch';
 import { planMission, checkBackendHealth, parseUserIntent, type BackendStatus } from './services/api';
@@ -185,13 +186,40 @@ function App() {
   };
 
   const decisionColor: Record<string, string> = {
+    DISPATCH_NOW: '#15803d',
+    DELAY: '#b45309',
+    REROUTE: '#2563eb',
+    ESCALATE: '#b91c1c',
     GO: '#10b981',
     WAIT: '#f59e0b',
-    REROUTE: '#3b82f6',
     WAIT_AND_REROUTE: '#8b5cf6',
     'HIGH HEAT — BEST AVAILABLE PLAN': '#ef4444',
     'NO ROUTE': '#6b7280',
   };
+
+  const decisionMeta: Record<string, { title: string; status: string; icon: typeof CheckCircle2 }> = {
+    DISPATCH_NOW: { title: 'Dispatch now', status: 'Policy satisfied', icon: CheckCircle2 },
+    DELAY: { title: `Hold for ${response?.wait_minutes || 0} minutes`, status: 'Lower exposure window', icon: Clock3 },
+    REROUTE: { title: 'Use the alternate route', status: 'Lower exposure path', icon: Navigation },
+    ESCALATE: { title: 'Supervisor review required', status: 'Policy conflict', icon: AlertTriangle },
+  };
+
+  const reasonLabels: Record<string, string> = {
+    NO_FEASIBLE_CANDIDATE: 'No feasible candidate',
+    NO_POLICY_COMPLIANT_PLAN: 'No policy-compliant plan',
+    THERMAL_POLICY_CONFLICT: 'Thermal policy conflict',
+    SUPERVISOR_APPROVAL_REQUIRED: 'Supervisor approval required',
+    LOWER_CALCULATED_EXPOSURE: 'Lower calculated exposure',
+    SLA_MET: 'SLA met',
+    SLA_VIOLATION: 'SLA violation',
+    EMERGENCY_PRIORITY: 'Emergency priority',
+  };
+
+  const currentDecision = response ? decisionMeta[response.decision] || {
+    title: response.decision.replace(/_/g, ' '),
+    status: 'Evaluation complete',
+    icon: Activity,
+  } : null;
 
   const activityVerb = useMemo(() => {
     switch (activity) {
@@ -208,7 +236,27 @@ function App() {
   }, [response, selectedRouteId]);
 
   return (
-    <>
+    <div className="app-shell">
+      <header className="app-topbar">
+        <div className="brand-lockup">
+          <div className="brand-mark"><ThermometerSun size={21} strokeWidth={2.4} /></div>
+          <div>
+            <div className="brand-name">CoolPath Ops</div>
+            <div className="brand-subtitle">Thermal Dispatch Gate</div>
+          </div>
+        </div>
+        <div className="topbar-context">
+          <span className="context-kicker">Operational console</span>
+          <span>Heat-to-dispatch translation for field crews</span>
+        </div>
+        <div className="system-status" aria-live="polite">
+          <span className={`status-dot ${backendStatus.online ? 'status-dot--online' : ''}`} />
+          <span>{backendStatus.online ? 'System online' : 'Waking backend'}</span>
+          <span className="status-divider" />
+          <span className="status-muted">{backendStatus.online ? 'Ready for evaluation' : 'Connecting...'}</span>
+        </div>
+      </header>
+      <main className="console-layout">
       <div className="sidebar">
         {/* Header */}
         <div className="header">
@@ -720,8 +768,15 @@ function App() {
         )}
       </div>
 
-      {/* Map */}
-      <div className="map-container">
+      <section className="map-workspace">
+        <div className="workspace-bar">
+          <div>
+            <span className="workspace-kicker">Live workspace</span>
+            <h2>Route and thermal evidence</h2>
+          </div>
+          <div className="workspace-meta"><MapPin size={14} /> Lower Manhattan operating area</div>
+        </div>
+        <div className="map-container">
         <Map
           missionResponse={response}
           originCoord={origin}
@@ -731,8 +786,73 @@ function App() {
           selectedRouteId={selectedRouteId}
           onSelectRoute={(id) => setSelectedRouteId(id)}
         />
-      </div>
-    </>
+        </div>
+      </section>
+      <aside className="insight-panel" aria-live="polite">
+        {response && currentDecision ? (() => {
+          const DecisionIcon = currentDecision.icon;
+          const reasons = response.reason_codes || [];
+          const provenance = response.provenance || {};
+          return (
+            <div className="insight-content">
+              <div className="panel-heading-row">
+                <div>
+                  <span className="workspace-kicker">Decision output</span>
+                  <h2>Dispatch recommendation</h2>
+                </div>
+                <span className="completed-chip"><CheckCircle2 size={13} /> Completed</span>
+              </div>
+              <div className="decision-hero" style={{ '--decision-color': decisionColor[response.decision] || '#475569' } as React.CSSProperties}>
+                <div className="decision-icon"><DecisionIcon size={22} /></div>
+                <div>
+                  <div className="decision-label">{response.decision.replace(/_/g, ' ')}</div>
+                  <div className="decision-title-compact">{currentDecision.title}</div>
+                </div>
+              </div>
+              <div className="decision-status-line"><ShieldCheck size={15} /> {currentDecision.status}</div>
+              <section className="insight-section">
+                <div className="section-label">Why this decision</div>
+                <p className="insight-explanation">{response.explanation || 'The deterministic decision engine evaluated available route and thermal evidence.'}</p>
+                <div className="reason-list">
+                  {reasons.length > 0 ? reasons.map((reason) => (
+                    <span className="reason-chip" key={reason}>{reasonLabels[reason] || reason.replace(/_/g, ' ')}</span>
+                  )) : <span className="reason-chip">Evaluation evidence recorded</span>}
+                </div>
+              </section>
+              <section className="insight-section">
+                <div className="section-label">Operational checks</div>
+                <div className="check-grid">
+                  <div><span>SLA</span><strong>{reasons.includes('SLA_VIOLATION') ? 'At risk' : 'Evaluated'}</strong></div>
+                  <div><span>Policy</span><strong>{response.decision === 'ESCALATE' ? 'Review required' : 'Evaluated'}</strong></div>
+                  <div><span>Authority</span><strong>{response.decision === 'ESCALATE' ? 'Supervisor' : 'Dispatcher'}</strong></div>
+                  <div><span>Exposure proxy</span><strong>{activeRoute ? `${activeRoute.thermal_exposure} C-min` : 'Recorded'}</strong></div>
+                </div>
+              </section>
+              <section className="evidence-section">
+                <div className="section-label"><ThermometerSun size={14} /> Evidence and provenance</div>
+                <div className="evidence-list">
+                  <div><span>Thermal source</span><strong>{provenance.thermal_provider || 'FortyGuard'}</strong></div>
+                  <div><span>Evidence state</span><strong>{provenance.thermal_data_mode || 'Recorded'}</strong></div>
+                  <div><span>Route source</span><strong>{provenance.routing_provider || 'Geoapify'}</strong></div>
+                  <div><span>Persistence</span><strong><Database size={13} /> {provenance.persistence || 'PERSISTED'}</strong></div>
+                </div>
+                <p className="metric-note">TEMP_TIME_PROXY_C_MIN is an operational environmental exposure proxy, not a medical safety measure.</p>
+              </section>
+              <div className="mission-footer"><span>Mission {response.mission_id || 'recorded'}</span><span>Version {response.mission_version || 1}</span></div>
+            </div>
+          );
+        })() : (
+          <div className="empty-insight">
+            <div className="empty-icon"><Bot size={23} /></div>
+            <span className="workspace-kicker">Decision workspace</span>
+            <h2>Evaluate a mission to begin</h2>
+            <p>CoolPath compares route, timing, thermal evidence, and configured policy before returning a dispatch recommendation.</p>
+            <div className="empty-steps"><span><Activity size={14} /> Intake</span><span><Navigation size={14} /> Evidence</span><span><ShieldCheck size={14} /> Decision</span></div>
+          </div>
+        )}
+      </aside>
+      </main>
+    </div>
   );
 }
 

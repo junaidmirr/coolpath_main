@@ -65,7 +65,18 @@ export interface ParsedIntent {
 }
 
 export interface MissionResponse {
+    mission_id?: string;
+    mission_version?: number;
     decision: string;
+    reason_codes?: string[];
+    provenance?: {
+        routing_provider?: string;
+        thermal_provider?: string;
+        thermal_data_mode?: string;
+        thermal_evidence_id?: string;
+        thermal_metric?: string;
+        persistence?: string;
+    };
     planning_mode?: PlanningMode;
     wait_minutes: number;
     optimal_departure_time?: string;
