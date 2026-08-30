@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, Database, MapPin, Navigation, ShieldCheck, ThermometerSun } from 'lucide-react';
+import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, MapPin, Navigation, ShieldCheck, ThermometerSun } from 'lucide-react';
 import Map, { type PinMode } from './components/Map';
 import LocationSearch, { type GeoResult } from './components/LocationSearch';
 import { planMission, checkBackendHealth, parseUserIntent, type BackendStatus } from './services/api';
@@ -204,16 +204,7 @@ function App() {
     ESCALATE: { title: 'Supervisor review required', status: 'Configured policy conflict', icon: AlertTriangle },
   };
 
-  const reasonLabels: Record<string, string> = {
-    NO_FEASIBLE_CANDIDATE: 'No feasible candidate',
-    NO_POLICY_COMPLIANT_PLAN: 'No policy-compliant plan',
-    THERMAL_POLICY_CONFLICT: 'Thermal policy conflict',
-    SUPERVISOR_APPROVAL_REQUIRED: 'Supervisor approval required',
-    LOWER_CALCULATED_EXPOSURE: 'Lower calculated exposure',
-    SLA_MET: 'SLA met',
-    SLA_VIOLATION: 'SLA violation',
-    EMERGENCY_PRIORITY: 'Emergency priority',
-  };
+
 
   const currentDecision = response ? decisionMeta[response.decision] || {
     title: response.decision.replace(/_/g, ' '),
@@ -463,17 +454,26 @@ function App() {
               </div>
             </div>
 
-            {/* Special Profile Tags (Extracted by Gemini) */}
-            {specialTags.length > 0 && (
-              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '12px' }}>
-                <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>Active Agent Tags:</span>
-                {specialTags.map((tag, i) => (
-                  <span key={i} style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: '#e0e7ff', color: '#3730a3', fontWeight: 600 }}>
-                    🏷 {tag.replace(/_/g, ' ')}
-                  </span>
-                ))}
+            {/* Parsed Fields (Extracted by Gemini) */}
+            {(specialTags.length > 0 || activity || pace || (planningMode === 'scheduled' && deadlineMinutes)) ? (
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px', background: '#f8fafc', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, width: '100%', marginBottom: '4px' }}>Extracted Mission Intent:</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%', fontSize: '11px' }}>
+                  <div><span style={{ color: '#94a3b8' }}>Activity:</span> <strong style={{ color: '#0f172a' }}>{activityVerb}</strong></div>
+                  <div><span style={{ color: '#94a3b8' }}>Pace:</span> <strong style={{ color: '#0f172a' }}>{pace}</strong></div>
+                  {planningMode === 'scheduled' && <div><span style={{ color: '#94a3b8' }}>Window:</span> <strong style={{ color: '#0f172a' }}>{deadlineMinutes} min</strong></div>}
+                  {specialTags.length > 0 && (
+                    <div style={{ gridColumn: 'span 2' }}>
+                      <span style={{ color: '#94a3b8' }}>Tags:</span> {specialTags.map((tag, i) => (
+                        <span key={i} style={{ marginLeft: '4px', padding: '2px 6px', borderRadius: '4px', background: '#e0e7ff', color: '#3730a3', fontWeight: 600 }}>
+                          {tag.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
+            ) : null}
 
             {/* Origin */}
             <LocationSearch
@@ -637,50 +637,8 @@ function App() {
                 </div>
               )}
 
-              {/* Decision Summary */}
-              <div className="decision-card">
-                <div className="decision-badge" style={{
-                  background: `${(decisionColor[response.decision] || '#6b7280')}15`,
-                  color: decisionColor[response.decision] || '#6b7280'
-                }}>
-                  {response.decision.replace(/_/g, ' ')}
-                </div>
-
-                {response.decision === 'WAIT_AND_REROUTE' && <div className="decision-title">Wait {response.wait_minutes} min + take cooler {activity} route</div>}
-                {response.decision === 'WAIT' && <div className="decision-title">Wait {response.wait_minutes} min before departing</div>}
-                {response.decision === 'REROUTE' && <div className="decision-title">Take the cooler alternate {activity} route</div>}
-                {response.decision === 'GO' && <div className="decision-title">Go now — direct {activity} route is optimal</div>}
-
-                {(() => {
-                  const currentReduction = activeRoute ? activeRoute.thermal_reduction_percent : (response.thermal_reduction_percent || 0);
-                  if (currentReduction > 0) {
-                    return (
-                      <>
-                        <div className="decision-stats" style={{ color: '#10b981' }}>
-                          {currentReduction}%
-                        </div>
-                        <div className="decision-sub">LESS ESTIMATED HEAT EXPOSURE</div>
-                      </>
-                    );
-                  } else {
-                    return (
-                      <>
-                        <div className="decision-stats" style={{ color: '#3b82f6', fontSize: '28px', letterSpacing: '-0.5px' }}>
-                          OPTIMAL
-                        </div>
-                        <div className="decision-sub">DIRECT PATH HAS LOWEST TRAVEL TIME & MINIMAL HEAT STRAIN (~{activeRoute?.avg_temp_c || 32.4}°C)</div>
-                      </>
-                    );
-                  }
-                })()}
-
-                <div style={{ marginTop: '16px', padding: '14px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', lineHeight: 1.6, color: '#475569' }}>
-                  <strong style={{ color: '#1e293b', fontSize: '13px', display: 'block', marginBottom: '4px' }}>
-                    Why this route for {currentActivityConfig.label}?
-                  </strong>
-                  {activeRoute?.explanation || response.explanation}
-                </div>
-              </div>
+              {/* Decorative gradients removed, keeping solid UI */}
+              {/* End old summary */}
 
               {/* Interactive Multi-Route Cards Selector */}
               {response.route_options && response.route_options.length > 0 && (
@@ -802,6 +760,8 @@ function App() {
                   </div>
                   <span className="completed-chip"><CheckCircle2 size={13} /> Completed</span>
                 </div>
+
+                {/* 1. ACTION */}
                 <div className="decision-hero" style={{ '--decision-color': decisionColor[response.decision] || '#475569' } as React.CSSProperties}>
                   <div className="decision-icon"><DecisionIcon size={22} /></div>
                   <div>
@@ -809,36 +769,66 @@ function App() {
                     <div className="decision-title-compact">{currentDecision.title}</div>
                   </div>
                 </div>
-                <div className="decision-status-line"><ShieldCheck size={15} /> {currentDecision.status}</div>
-                <section className="insight-section">
-                  <div className="section-label">Why this decision</div>
-                  <p className="insight-explanation">{response.explanation || 'The deterministic decision engine evaluated available route and thermal evidence.'}</p>
-                  <div className="reason-list">
-                    {reasons.length > 0 ? reasons.map((reason) => (
-                      <span className="reason-chip" key={reason}>{reasonLabels[reason] || reason.replace(/_/g, ' ')}</span>
-                    )) : <span className="reason-chip">Evaluation evidence recorded</span>}
+
+                {/* 2. WHY */}
+                <div style={{ padding: '16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '14px', color: '#1e293b', lineHeight: 1.5 }}>
+                  {response.explanation || 'The deterministic decision engine evaluated available route and thermal evidence.'}
+                </div>
+
+                {/* 3. TRADE-OFF */}
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', alignItems: 'center' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Trade-Off</div>
+                  <div style={{ fontSize: '13px', color: '#0f172a', fontWeight: 600 }}>
+                    {response.wait_minutes > 0 ? `Departure +${response.wait_minutes} min` : (activeRoute?.thermal_reduction_percent && activeRoute.thermal_reduction_percent > 0 ? `Thermal Exposure -${activeRoute.thermal_reduction_percent}%` : 'Direct baseline route')}
                   </div>
-                </section>
-                <section className="insight-section">
-                  <div className="section-label">Operational checks</div>
-                  <div className="check-grid">
-                    <div><span>SLA</span><strong>{reasons.includes('SLA_VIOLATION') ? 'At risk' : 'Evaluated'}</strong></div>
-                    <div><span>Policy</span><strong>{response.decision === 'ESCALATE' ? 'Review required' : 'Evaluated'}</strong></div>
-                    <div><span>Authority</span><strong>{response.decision === 'ESCALATE' ? 'Supervisor' : 'Dispatcher'}</strong></div>
-                    <div><span>Exposure proxy</span><strong>{activeRoute ? `${activeRoute.thermal_exposure} C-min` : 'Recorded'}</strong></div>
+                </div>
+
+                {/* 4. SLA */}
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', alignItems: 'center' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>SLA</div>
+                  <div style={{ fontSize: '13px', color: reasons.includes('SLA_VIOLATION') ? '#b91c1c' : '#15803d', fontWeight: 600 }}>
+                    {reasons.includes('SLA_VIOLATION') ? 'Violation Risk' : 'Satisfied'}
                   </div>
-                </section>
-                <section className="evidence-section">
-                  <div className="section-label"><ThermometerSun size={14} /> Evidence and provenance</div>
-                  <div className="evidence-list">
-                    <div><span>Thermal source</span><strong>{provenance.thermal_provider || 'FortyGuard'}</strong></div>
-                    <div><span>Evidence state</span><strong>{provenance.thermal_data_mode || 'Recorded'}</strong></div>
-                    <div><span>Route source</span><strong>{provenance.routing_provider || 'Geoapify'}</strong></div>
-                    <div><span>Persistence</span><strong><Database size={13} /> {provenance.persistence || 'PERSISTED'}</strong></div>
+                </div>
+
+                {/* 5. POLICY */}
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', alignItems: 'center' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Policy</div>
+                  <div style={{ fontSize: '13px', color: reasons.includes('THERMAL_POLICY_CONFLICT') ? '#b91c1c' : '#15803d', fontWeight: 600 }}>
+                    {reasons.includes('THERMAL_POLICY_CONFLICT') ? 'Conflict' : 'Satisfied'}
                   </div>
-                  <p className="metric-note">TEMP_TIME_PROXY_C_MIN is an operational environmental exposure proxy, not a medical safety measure.</p>
-                </section>
-                <div className="mission-footer"><span>Mission {response.mission_id || 'recorded'}</span><span>Version {response.mission_version || 1}</span></div>
+                </div>
+
+                {/* 6. EVIDENCE */}
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', alignItems: 'center' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Evidence</div>
+                  <div style={{ fontSize: '13px', color: '#0f172a', fontWeight: 600 }}>
+                    FortyGuard · {provenance.thermal_data_mode || 'LIVE'}
+                  </div>
+                </div>
+
+                {/* 7. AUTHORITY */}
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', padding: '12px 16px', borderBottom: '1px solid #e2e8f0', alignItems: 'center', background: response.decision === 'ESCALATE' ? '#fef2f2' : 'transparent' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>Authority</div>
+                  <div style={{ fontSize: '13px', color: response.decision === 'ESCALATE' ? '#b91c1c' : '#0f172a', fontWeight: 700 }}>
+                    {response.decision === 'ESCALATE' ? 'Supervisor review required' : 'No approval required'}
+                  </div>
+                </div>
+
+                {/* EVIDENCE DRAWER */}
+                <details style={{ margin: '16px', padding: '12px', background: '#f1f5f9', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <summary style={{ fontSize: '12px', fontWeight: 600, color: '#475569', cursor: 'pointer', outline: 'none' }}>Technical Evidence Drawer</summary>
+                  <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '11px', color: '#64748b' }}>thermal evidence</span><strong style={{ fontSize: '12px', color: '#0f172a' }}>{provenance.thermal_provider || 'FortyGuard'}</strong></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '11px', color: '#64748b' }}>route provider</span><strong style={{ fontSize: '12px', color: '#0f172a' }}>{provenance.routing_provider || 'Geoapify'}</strong></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '11px', color: '#64748b' }}>calculated exposure proxy</span><strong style={{ fontSize: '12px', color: '#0f172a' }}>{activeRoute ? activeRoute.thermal_exposure : response.comparison?.recommended?.thermal_exposure || 0} C-min</strong></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '11px', color: '#64748b' }}>SLA</span><strong style={{ fontSize: '12px', color: '#0f172a' }}>{reasons.includes('SLA_VIOLATION') ? 'Violation' : 'Satisfied'}</strong></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '11px', color: '#64748b' }}>policy</span><strong style={{ fontSize: '12px', color: '#0f172a' }}>{reasons.includes('THERMAL_POLICY_CONFLICT') ? 'Conflict' : 'Satisfied'}</strong></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexDirection: 'column' }}><span style={{ fontSize: '11px', color: '#64748b' }}>reason codes</span><strong style={{ fontSize: '11px', color: '#475569', wordBreak: 'break-word', fontFamily: 'monospace' }}>{reasons.join(', ') || 'NONE'}</strong></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '11px', color: '#64748b' }}>mission version</span><strong style={{ fontSize: '12px', color: '#0f172a' }}>{response.mission_version || 1}</strong></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '11px', color: '#64748b' }}>provider provenance</span><strong style={{ fontSize: '12px', color: '#0f172a' }}>{provenance.persistence || 'PERSISTED'}</strong></div>
+                  </div>
+                </details>
               </div>
             );
           })() : (
@@ -846,7 +836,7 @@ function App() {
               <div className="empty-icon"><Bot size={23} /></div>
               <span className="workspace-kicker">Decision workspace</span>
               <h2>Evaluate a mission to begin</h2>
-              <p>CoolPath compares route, timing, thermal evidence, and configured policy before returning a dispatch recommendation.</p>
+              <p>Set the mission and evaluate to compare route, timing, thermal evidence, and operational policy.</p>
               <div className="empty-steps"><span><Activity size={14} /> Intake</span><span><Navigation size={14} /> Evidence</span><span><ShieldCheck size={14} /> Decision</span></div>
             </div>
           )}

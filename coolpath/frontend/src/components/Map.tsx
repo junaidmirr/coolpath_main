@@ -245,16 +245,18 @@ const Map: React.FC<MapProps> = ({
           position: 'absolute',
           bottom: '30px',
           left: '16px',
-          background: 'white',
+          background: 'var(--panel-bg)',
           borderRadius: '10px',
           padding: '12px 16px',
-          boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
+          boxShadow: 'var(--shadow-lg)',
           fontSize: '12px',
           display: 'flex',
           flexDirection: 'column',
           gap: '8px',
           maxWidth: '220px',
-          zIndex: 1000
+          zIndex: 1000,
+          border: '1px solid var(--border-color)',
+          color: 'var(--foreground)'
         }}>
           <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
             Routes (Click to select)
@@ -273,9 +275,9 @@ const Map: React.FC<MapProps> = ({
                   cursor: 'pointer',
                   padding: '4px 6px',
                   borderRadius: '6px',
-                  background: isSel ? '#f1f5f9' : 'transparent',
+                  background: isSel ? 'var(--panel-bg-elevated)' : 'transparent',
                   fontWeight: isSel ? 700 : 500,
-                  color: isSel ? '#0f172a' : '#475569'
+                  color: isSel ? 'var(--foreground)' : 'var(--text-muted)'
                 }}
               >
                 <div style={{
