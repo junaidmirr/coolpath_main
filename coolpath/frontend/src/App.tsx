@@ -198,10 +198,10 @@ function App() {
   };
 
   const decisionMeta: Record<string, { title: string; status: string; icon: typeof CheckCircle2 }> = {
-    DISPATCH_NOW: { title: 'Dispatch now', status: 'Policy satisfied', icon: CheckCircle2 },
-    DELAY: { title: `Hold for ${response?.wait_minutes || 0} minutes`, status: 'Lower exposure window', icon: Clock3 },
-    REROUTE: { title: 'Use the alternate route', status: 'Lower exposure path', icon: Navigation },
-    ESCALATE: { title: 'Supervisor review required', status: 'Policy conflict', icon: AlertTriangle },
+    DISPATCH_NOW: { title: 'Dispatch now', status: 'Configured policy satisfied', icon: CheckCircle2 },
+    DELAY: { title: `Hold for ${response?.wait_minutes || 0} minutes`, status: 'Lower calculated environmental exposure', icon: Clock3 },
+    REROUTE: { title: 'Use the alternate route', status: 'Lower calculated environmental exposure', icon: Navigation },
+    ESCALATE: { title: 'Supervisor review required', status: 'Configured policy conflict', icon: AlertTriangle },
   };
 
   const reasonLabels: Record<string, string> = {
