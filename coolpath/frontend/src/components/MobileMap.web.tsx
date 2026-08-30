@@ -59,10 +59,16 @@ function buildWebMapHtml(token: string, styleUrl: string) {
 .origin{background:#2dd9b8;box-shadow:0 0 0 6px rgba(45,217,184,.22),0 4px 14px rgba(0,0,0,.5)}
 .destination{background:#e8895e;box-shadow:0 0 0 6px rgba(232,137,94,.22),0 4px 14px rgba(0,0,0,.5)}
 .traveler{width:27px;height:27px;border:3px solid #fff;border-radius:50%;background:#38bdf8;box-shadow:0 0 0 7px rgba(56,189,248,.2)}
+.fallback{height:100%;display:grid;place-items:center;color:#a8a296;font:600 14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background-color:#101915;background-image:linear-gradient(rgba(45,217,184,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(45,217,184,.06) 1px,transparent 1px);background-size:42px 42px}.fallback strong{display:block;color:#f3f0ea;font-size:18px;margin-bottom:7px}.fallback span{display:block;text-align:center;max-width:340px;line-height:1.5}
 </style></head><body><div id="map"></div><script>
 (() => {
   const SOURCE = 'coolpath-web-map';
   const send = (type, data = {}) => parent.postMessage({ source: SOURCE, type, ...data }, '*');
+  if (typeof mapboxgl === 'undefined') {
+    document.getElementById('map').innerHTML = '<div class="fallback"><span><strong>Interactive map unavailable</strong>Check your connection or Mapbox access token. Route planning controls remain available.</span></div>';
+    send('map_error', { msg: 'Mapbox could not be loaded' });
+    return;
+  }
   mapboxgl.accessToken = ${JSON.stringify(token)};
   const map = new mapboxgl.Map({container:'map',style:${JSON.stringify(styleUrl)},center:[-73.9855,40.758],zoom:13,attributionControl:false});
   map.addControl(new mapboxgl.NavigationControl({showCompass:false}),'bottom-right');

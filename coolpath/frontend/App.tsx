@@ -1552,6 +1552,8 @@ export default function App() {
 
   // ── 🧭 Compass Heading Sensor ────────────────────────────────────────────────
   useEffect(() => {
+    if (Platform.OS === 'web') return;
+
     let sub: any = null;
     let isDead = false;
 

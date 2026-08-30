@@ -13,7 +13,6 @@ import {
   Dimensions,
   KeyboardAvoidingView,
 } from 'react-native';
-import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
@@ -26,6 +25,66 @@ import {
 } from '../services/voiceAssistant';
 
 const { width: SW, height: SH } = Dimensions.get('window');
+
+function createBrowserSpeechModule() {
+  const listeners = new Map<string, Set<(event: any) => void>>();
+  let recognition: any = null;
+  const emit = (name: string, event: any = {}) => listeners.get(name)?.forEach(listener => listener(event));
+
+  return {
+    addListener(name: string, listener: (event: any) => void) {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name)!.add(listener);
+      return { remove: () => listeners.get(name)?.delete(listener) };
+    },
+    async requestPermissionsAsync() {
+      return { granted: true, status: 'granted' };
+    },
+    getSpeechRecognitionServices() {
+      return [];
+    },
+    start(options: any = {}) {
+      const browserWindow = window as any;
+      const Recognition = browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition;
+      if (!Recognition) {
+        emit('error', { error: 'not-supported', message: 'Speech recognition is unavailable in this browser.' });
+        return;
+      }
+
+      recognition?.abort?.();
+      recognition = new Recognition();
+      recognition.lang = options.lang || 'en-US';
+      recognition.continuous = Boolean(options.continuous);
+      recognition.interimResults = options.interimResults !== false;
+      recognition.maxAlternatives = options.maxAlternatives || 1;
+      recognition.onstart = () => emit('start');
+      recognition.onend = () => emit('end');
+      recognition.onerror = (event: any) => emit('error', event);
+      recognition.onresult = (event: any) => {
+        const results = Array.from(event.results || []).map((result: any) => ({
+          transcript: result?.[0]?.transcript || '',
+          isFinal: Boolean(result?.isFinal),
+        }));
+        emit('result', {
+          results,
+          isFinal: results.length > 0 && results[results.length - 1].isFinal,
+        });
+      };
+      recognition.start();
+    },
+    stop() {
+      recognition?.stop?.();
+    },
+    abort() {
+      recognition?.abort?.();
+      recognition = null;
+    },
+  };
+}
+
+const ExpoSpeechRecognitionModule: any = Platform.OS === 'web'
+  ? createBrowserSpeechModule()
+  : require('expo-speech-recognition').ExpoSpeechRecognitionModule;
 
 interface CoolPathAssistantModalProps {
   visible: boolean;

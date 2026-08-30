@@ -20,7 +20,6 @@ const CANDIDATE_HOSTS = [
 
 export const COMMON_HEADERS = {
   'ngrok-skip-browser-warning': 'true',
-  'User-Agent': 'CoolPathMobile/1.0',
 };
 
 let activeBaseUrl: string | null = null;
