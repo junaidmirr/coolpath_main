@@ -29,6 +29,7 @@ export interface RouteOption {
     thermal_exposure: number;
     thermal_reduction_percent: number;
     coordinates: number[][];
+    geometry_temps?: number[][];
     explanation: string;
     is_recommended: boolean;
 }

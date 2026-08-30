@@ -1,0 +1,66 @@
+{
+  "expo": {
+    "name": "CoolPath",
+    "slug": "coolpath-web",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0f172a"
+    },
+    "icon": "./assets/app_icon.png",
+    "android": {
+      "package": "com.coolpath.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/app_icon.png",
+        "backgroundColor": "#0f172a"
+      },
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.INTERNET",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.coolpath.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "CoolPath uses your location to find cooler walking routes near you."
+      }
+    },
+    "plugins": [
+      "expo-dev-client",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "CoolPath uses your location to find cooler routes near you.",
+          "locationWhenInUsePermission": "CoolPath uses your location to find cooler routes near you.",
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "minSdkVersion": 23,
+            "buildToolsVersion": "34.0.0",
+            "kotlinVersion": "1.9.24"
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "322d884b-8849-45b2-a223-3af4b67cd6bf"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/app_icon.png"
+    }
+  }
+}
