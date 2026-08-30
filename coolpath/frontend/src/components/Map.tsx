@@ -309,7 +309,7 @@ const Map: React.FC<MapProps> = ({
 
     if (m.isStyleLoaded()) drawRoutes();
     else m.once('styledata', drawRoutes);
-  }, [missionResponse, selectedRouteId, onSelectRoute]);
+  }, [missionResponse, selectedRouteId, onSelectRoute, pinMode]);
 
   const activeOptions = missionResponse?.route_options || [];
 

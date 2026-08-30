@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { LocateFixed, Mic, Navigation, Sparkles, Volume2 } from 'lucide-react';
 import Map, { type PinMode } from './components/Map';
 import LocationSearch, { type GeoResult } from './components/LocationSearch';
 import { planMission, checkBackendHealth, parseUserIntent, type BackendStatus } from './services/api';
@@ -10,6 +11,21 @@ interface NamedCoord {
   lat: number;
   lng: number;
   name: string;
+}
+
+interface BrowserSpeechRecognition {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+interface BrowserSpeechRecognitionConstructor {
+  new (): BrowserSpeechRecognition;
 }
 
 const ACTIVITIES: { id: ActivityType; label: string; icon: string; speedKmh: number }[] = [
@@ -40,6 +56,9 @@ function App() {
   const [selectedRouteId, setSelectedRouteId] = useState<string>('coolest');
   const [error, setError] = useState<string | null>(null);
   const [backendStatus, setBackendStatus] = useState<BackendStatus>({ online: false, url: null, port: null });
+  const [isListening, setIsListening] = useState(false);
+  const [assistantMessage, setAssistantMessage] = useState('Tell me where you are going and how you want to get there.');
+  const [recognition, setRecognition] = useState<BrowserSpeechRecognition | null>(null);
 
   // Planning Mode: Instant vs Scheduled
   const [planningMode, setPlanningMode] = useState<PlanningMode>('instant');
@@ -99,6 +118,7 @@ function App() {
     if (!promptToParse.trim()) return;
     setAgentLoading(true);
     setError(null);
+    setAssistantMessage('Understanding your trip preferences…');
     try {
       const res = await parseUserIntent(promptToParse);
       const intent: ParsedIntent = res.intent;
@@ -110,12 +130,61 @@ function App() {
           setPlanningMode('scheduled');
           setDeadlineMinutes(intent.deadline_minutes);
         }
+        setAssistantMessage(intent.summary || 'I understood your trip. Review the route details, then plan when ready.');
       }
     } catch (err: any) {
       console.warn('Agent intent parsing warning:', err);
+      setAssistantMessage('I could not reach the assistant right now. You can still set your route manually.');
     } finally {
       setAgentLoading(false);
     }
+  };
+
+  const speakAssistant = (message: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.rate = 0.98;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const startVoiceAssistant = () => {
+    const SpeechRecognition = (window as unknown as { SpeechRecognition?: BrowserSpeechRecognitionConstructor; webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor }).SpeechRecognition
+      || (window as unknown as { webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor }).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError('Voice input is not supported in this browser. You can type the same request instead.');
+      return;
+    }
+    if (recognition) {
+      recognition.stop();
+      setRecognition(null);
+      setIsListening(false);
+      return;
+    }
+    const nextRecognition = new SpeechRecognition();
+    nextRecognition.lang = 'en-US';
+    nextRecognition.interimResults = false;
+    nextRecognition.continuous = false;
+    nextRecognition.onresult = (event) => {
+      const transcript = Array.from(event.results).map((result) => result[0]?.transcript || '').join(' ').trim();
+      if (transcript) {
+        setAgentPrompt(transcript);
+        void handleParsePrompt(transcript);
+      }
+    };
+    nextRecognition.onerror = () => {
+      setError('Voice input stopped. Please try again or type your request.');
+      setIsListening(false);
+      setRecognition(null);
+    };
+    nextRecognition.onend = () => {
+      setIsListening(false);
+      setRecognition(null);
+    };
+    setRecognition(nextRecognition);
+    setIsListening(true);
+    nextRecognition.start();
   };
 
   const handleOriginSelect = (r: GeoResult) => {
@@ -225,25 +294,32 @@ function App() {
               {backendStatus.online ? `Port ${backendStatus.port}` : 'Backend Offline'}
             </span>
           </div>
-          <p>Heat-aware multi-modal mission planner — powered by FortyGuard & CoolPath Assistant.</p>
+          <p>Heat-aware routing for people, pets, and everyday movement.</p>
         </div>
 
         {/* Form */}
         <div className="form-section">
           {/* ✨ CoolPath Assistant Natural Language Prompt Bar */}
-          <div style={{
+          <div className="assistant-panel" style={{
             marginBottom: '16px',
             padding: '12px 14px',
-            background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-            border: '1px solid #bae6fd',
+            background: 'var(--panel-bg-elevated)',
+            border: '1px solid var(--border-color)',
             borderRadius: '10px',
             boxShadow: '0 2px 6px rgba(56, 189, 248, 0.08)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <span style={{ fontSize: '12px', fontWeight: 700, color: '#0369a1', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                ✨ CoolPath Assistant Prompt Bar
+              <span className="assistant-title">
+                <span className="assistant-orb"><Sparkles size={14} /></span>
+                CoolPath Assistant
               </span>
-              {agentLoading && <span style={{ fontSize: '11px', color: '#0284c7' }}>⏳ CoolPath parsing…</span>}
+              {agentLoading && <span className="assistant-status">Thinking…</span>}
+            </div>
+            <div className="assistant-message-row">
+              <p className="assistant-message">{assistantMessage}</p>
+              <button type="button" className="assistant-read-btn" onClick={() => speakAssistant(assistantMessage)} title="Read assistant message aloud" aria-label="Read assistant message aloud">
+                <Volume2 size={15} />
+              </button>
             </div>
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
               <input
@@ -256,10 +332,10 @@ function App() {
                   flex: 1,
                   padding: '8px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #93c5fd',
+                  border: '1px solid var(--border-color)',
                   fontSize: '12px',
                   outline: 'none',
-                  background: 'white'
+                  background: 'var(--bg-color)',
                 }}
               />
               <button
@@ -269,7 +345,7 @@ function App() {
                 style={{
                   padding: '8px 12px',
                   borderRadius: '6px',
-                  background: '#0284c7',
+                  background: 'var(--primary)',
                   color: 'white',
                   border: 'none',
                   fontSize: '12px',
@@ -277,7 +353,10 @@ function App() {
                   cursor: 'pointer'
                 }}
               >
-                Parse
+                <Navigation size={14} /> Parse trip
+              </button>
+              <button className={`voice-btn ${isListening ? 'voice-btn--recording' : ''}`} type="button" onClick={startVoiceAssistant} aria-label={isListening ? 'Stop voice input' : 'Start voice input'} title={isListening ? 'Stop voice input' : 'Speak your trip request'}>
+                <Mic size={17} />
               </button>
             </div>
             {/* Quick Presets */}
@@ -293,9 +372,9 @@ function App() {
                   style={{
                     padding: '3px 8px',
                     borderRadius: '12px',
-                    background: 'white',
-                    border: '1px solid #bae6fd',
-                    color: '#0369a1',
+                    background: 'transparent',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-secondary)',
                     fontSize: '11px',
                     fontWeight: 500,
                     cursor: 'pointer'
@@ -498,7 +577,7 @@ function App() {
             onClick={handlePlan}
             disabled={loading || !backendStatus.online}
           >
-            {loading ? `⏳ Planning ${activity} trip…` : !backendStatus.online ? '⚠ Backend Offline' : `🌡 Plan ${currentActivityConfig.label} Route`}
+            {loading ? `Planning ${activity} trip…` : !backendStatus.online ? 'Backend offline' : <><LocateFixed size={17} /> Plan {currentActivityConfig.label} route</>}
           </button>
         </div>
 
