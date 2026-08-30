@@ -24,17 +24,27 @@ const ROUTE_COLORS: Record<string, string> = {
   route_3: '#F59E0B',   // Amber
 };
 
-// Custom DivIcons to replace Mapbox elements
+// Premium animated DivIcons to replace Mapbox elements
 const originIcon = L.divIcon({
   className: 'custom-pin-origin',
-  html: `<div style="width: 18px; height: 18px; border-radius: 50%; background: #10b981; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>`,
+  html: `
+    <div style="position: relative; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">
+      <div style="position: absolute; width: 100%; height: 100%; background: var(--thermal-cool); border-radius: 50%; opacity: 0.3; animation: pulse-glow 2s infinite;"></div>
+      <div style="width: 14px; height: 14px; border-radius: 50%; background: var(--thermal-cool); border: 2px solid white; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.4);"></div>
+    </div>
+  `,
   iconSize: [24, 24],
   iconAnchor: [12, 12],
 });
 
 const destIcon = L.divIcon({
   className: 'custom-pin-dest',
-  html: `<div style="width: 18px; height: 18px; border-radius: 50%; background: #ef4444; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>`,
+  html: `
+    <div style="position: relative; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">
+      <div style="position: absolute; width: 100%; height: 100%; background: var(--thermal-hot); border-radius: 50%; opacity: 0.3; animation: pulse-glow 2s infinite; animation-delay: 1s;"></div>
+      <div style="width: 14px; height: 14px; border-radius: 50%; background: var(--thermal-hot); border: 2px solid white; z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,0.4);"></div>
+    </div>
+  `,
   iconSize: [24, 24],
   iconAnchor: [12, 12],
 });
@@ -99,6 +109,26 @@ const MapBoundsFitter = ({
       map.flyToBounds(bounds, { padding: [50, 50], duration: 1.0 });
     }
   }, [map, originCoord, destinationCoord, routes]);
+
+  // Fix React-Leaflet grey screen tile bug
+  useEffect(() => {
+    // Invalidate size immediately to ensure tiles load
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+
+    // Watch for container resizes
+    const resizeObserver = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    
+    const container = map.getContainer();
+    if (container) {
+      resizeObserver.observe(container);
+    }
+    
+    return () => resizeObserver.disconnect();
+  }, [map]);
 
   return null;
 };
@@ -256,9 +286,9 @@ const Map: React.FC<MapProps> = ({
           maxWidth: '220px',
           zIndex: 1000,
           border: '1px solid var(--border-color)',
-          color: 'var(--foreground)'
+          color: 'var(--text-primary)'
         }}>
-          <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
             Routes (Click to select)
           </span>
           {routeOptions.map((r) => {
@@ -277,7 +307,7 @@ const Map: React.FC<MapProps> = ({
                   borderRadius: '6px',
                   background: isSel ? 'var(--panel-bg-elevated)' : 'transparent',
                   fontWeight: isSel ? 700 : 500,
-                  color: isSel ? 'var(--foreground)' : 'var(--text-muted)'
+                  color: isSel ? 'var(--text-primary)' : 'var(--text-muted)'
                 }}
               >
                 <div style={{

@@ -88,11 +88,11 @@ const LocationSearch: React.FC<LocationSearchProps> = ({ label, value, onSelect,
       {value && !query && (
         <div style={{
           padding: '8px 12px',
-          background: '#f0fdf4',
+          background: `${dotColor}12`,
           border: `1px solid ${dotColor}33`,
           borderRadius: '6px 6px 0 0',
           fontSize: '13px',
-          color: '#166534',
+          color: dotColor,
           fontWeight: 500,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -122,7 +122,7 @@ const LocationSearch: React.FC<LocationSearchProps> = ({ label, value, onSelect,
           top: '50%',
           transform: 'translateY(-50%)',
           fontSize: '12px',
-          color: '#6b7280'
+          color: 'var(--text-muted)'
         }}>
           Searching…
         </div>
@@ -134,11 +134,11 @@ const LocationSearch: React.FC<LocationSearchProps> = ({ label, value, onSelect,
           top: '100%',
           left: 0,
           right: 0,
-          background: 'white',
-          border: '1px solid #e5e7eb',
+          background: 'var(--panel-bg-elevated)',
+          border: '1px solid var(--border-color)',
           borderTop: 'none',
           borderRadius: '0 0 8px 8px',
-          boxShadow: '0 8px 20px -4px rgba(0,0,0,0.15)',
+          boxShadow: 'var(--shadow-lg)',
           zIndex: 1000,
           maxHeight: '220px',
           overflowY: 'auto'
@@ -156,11 +156,11 @@ const LocationSearch: React.FC<LocationSearchProps> = ({ label, value, onSelect,
                 background: 'none',
                 cursor: 'pointer',
                 fontSize: '13px',
-                color: '#1e293b',
-                borderBottom: i < results.length - 1 ? '1px solid #f1f5f9' : 'none',
+                color: 'var(--text-primary)',
+                borderBottom: i < results.length - 1 ? '1px solid var(--border-color)' : 'none',
                 lineHeight: 1.4
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-color)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'none')}
             >
               <span style={{ marginRight: '6px' }}>📍</span>
@@ -176,13 +176,13 @@ const LocationSearch: React.FC<LocationSearchProps> = ({ label, value, onSelect,
           top: '100%',
           left: 0,
           right: 0,
-          background: 'white',
-          border: '1px solid #e5e7eb',
+          background: 'var(--panel-bg-elevated)',
+          border: '1px solid var(--border-color)',
           borderTop: 'none',
           borderRadius: '0 0 8px 8px',
           padding: '12px 14px',
           fontSize: '13px',
-          color: '#6b7280',
+          color: 'var(--text-muted)',
           zIndex: 1000
         }}>
           No results found for "{query}"

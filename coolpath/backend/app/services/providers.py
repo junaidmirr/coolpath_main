@@ -70,6 +70,7 @@ class FortyGuardThermalProviderAdapter:
             data_mode = "FALLBACK"
             coverage_status = "FALLBACK_DATA_USED"
         else:
+            data_mode = "SIMULATED"
             coverage_status = "SYNTHETIC"
             
         evidence = ThermalEvidence(
